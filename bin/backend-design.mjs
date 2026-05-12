@@ -66,7 +66,6 @@ const STACKS = [
 
 const AUTH_OPTIONS = [
   { id: "jwt", label: "JWT (stateless, simple)", tagline: "Recommended for SPAs and mobile clients." },
-  { id: "session", label: "Sessions (cookie-based)", tagline: "More secure for browser apps; needs a session store." },
   { id: "none", label: "No auth", tagline: "Skip if the app has no users." },
 ];
 
@@ -93,6 +92,53 @@ function pathExists(p) {
   } catch {
     return false;
   }
+}
+
+function detectPackageManager(cwd) {
+  if (existsSync(join(cwd, "bun.lockb")) || existsSync(join(cwd, "bun.lock"))) return "bun";
+  if (existsSync(join(cwd, "pnpm-lock.yaml"))) return "pnpm";
+  if (existsSync(join(cwd, "yarn.lock"))) return "yarn";
+  if (existsSync(join(cwd, "package-lock.json"))) return "npm";
+  return "pnpm";
+}
+
+function detectWorkspace(cwd) {
+  const out = [];
+  const pkgPath = join(cwd, "package.json");
+  if (existsSync(pkgPath)) {
+    try {
+      const pj = JSON.parse(readFileSync(pkgPath, "utf8"));
+      if (Array.isArray(pj.workspaces) || pj.workspaces?.packages) {
+        const patterns = Array.isArray(pj.workspaces) ? pj.workspaces : pj.workspaces.packages;
+        for (const dir of ["apps", "packages"]) {
+          const root = join(cwd, dir);
+          if (existsSync(root)) {
+            try {
+              for (const sub of readdirSync(root)) {
+                if (existsSync(join(root, sub, "package.json"))) out.push(`${dir}/${sub}`);
+              }
+            } catch {}
+          }
+        }
+        if (!out.length && patterns) for (const p of patterns) out.push(p);
+      }
+    } catch {}
+  }
+  if (existsSync(join(cwd, "pnpm-workspace.yaml"))) {
+    for (const dir of ["apps", "packages"]) {
+      const root = join(cwd, dir);
+      if (existsSync(root)) {
+        try {
+          for (const sub of readdirSync(root)) {
+            if (existsSync(join(root, sub, "package.json")) && !out.includes(`${dir}/${sub}`)) {
+              out.push(`${dir}/${sub}`);
+            }
+          }
+        } catch {}
+      }
+    }
+  }
+  return out;
 }
 
 function detectFrontend(cwd) {
@@ -214,6 +260,12 @@ function countSourceFiles(cwd, patterns_key) {
 
 async function install() {
   banner();
+  if (process.platform === "win32") {
+    fail("Windows is not supported (the install needs symlinks + Unix tooling).");
+    dim("Use WSL2 or run on macOS/Linux.");
+    blank();
+    process.exit(1);
+  }
   step("Installing skill into ~/.claude/skills/");
   const skillsDir = join(homedir(), ".claude", "skills");
   const target = join(skillsDir, "backend-design");
@@ -224,10 +276,14 @@ async function install() {
   }
   symlinkSync(pkgRoot, target, "dir");
   ok(`linked: ${pc.dim(target + " → " + pkgRoot)}`);
+  if (pkgRoot.includes("/_npx/") || pkgRoot.includes("\\_npx\\")) {
+    warn("install source is npx's cache — the symlink may break when the cache is cleared.");
+    dim("For a durable install: `npm i -g backend-design` then `backend-design install`, or clone the repo and run `node bin/backend-design.mjs install` from the clone.");
+  }
   blank();
   console.log(pc.bold("  Next steps"));
   console.log(`  ${pc.dim("1.")} ${pc.dim("cd into a frontend project (any modern framework)")}`);
-  console.log(`  ${pc.dim("2.")} ${pc.cyan("npx backend-design start")}  ${pc.dim("# detect frontend, pick stack, write config")}`);
+  console.log(`  ${pc.dim("2.")} ${pc.cyan("backend-design start")}  ${pc.dim("# detect frontend, pick stack, write config")}`);
   console.log(`  ${pc.dim("3.")} Restart Claude Code, then run ${pc.cyan("/backend-design")}`);
   blank();
 }
@@ -256,6 +312,12 @@ async function start() {
     dim("  - package.json with react/next/vue/nuxt/svelte/angular/astro/solid/qwik/remix/gatsby");
     dim("  - index.html (vanilla or HTMX)");
     blank();
+    const ws = detectWorkspace(cwd);
+    if (ws.length) {
+      dim("this looks like a workspace root. cd into one of these and re-run:");
+      for (const p of ws) dim(`  - ${p}`);
+      blank();
+    }
     process.exit(1);
   }
   const versionStr = front.version ? pc.dim(front.version) : "";
@@ -334,6 +396,10 @@ async function start() {
   if (!dirResp.out) process.exit(130);
   blank();
 
+  const pkgManager = detectPackageManager(cwd);
+  ok(`detected package manager: ${pkgManager}`);
+  blank();
+
   const config = {
     version: pkg.version,
     created_at: new Date().toISOString(),
@@ -348,6 +414,7 @@ async function start() {
     },
     auth: { strategy: authResp.auth },
     output_dir: dirResp.out,
+    pkg_manager: pkgManager,
     frontend: front,
   };
 
@@ -360,9 +427,10 @@ async function start() {
   blank();
 
   console.log(pc.bold("  Summary"));
-  console.log(`  ${pc.dim("stack:")}  ${stack.label}`);
-  console.log(`  ${pc.dim("auth:")}   ${authResp.auth}`);
-  console.log(`  ${pc.dim("output:")} ${dirResp.out}`);
+  console.log(`  ${pc.dim("stack:")}     ${stack.label}`);
+  console.log(`  ${pc.dim("auth:")}      ${authResp.auth}`);
+  console.log(`  ${pc.dim("output:")}    ${dirResp.out}`);
+  console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
   blank();
   console.log(pc.bold("  Next step"));
   console.log(`  Open Claude Code in this directory and run ${pc.cyan("/backend-design")}`);

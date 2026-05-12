@@ -42,17 +42,31 @@ You pick one when you run `npx backend-design start`:
 | **Next.js API routes + Prisma + Postgres** | Colocated with the frontend. Easiest Vercel deploy. |
 | **Python + FastAPI + SQLAlchemy + Postgres** | Strong typing, async by default. SQLAlchemy 2 + alembic. |
 
-Auth: JWT, sessions, or none. All stacks use bcrypt for password hashing.
+Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions are not yet implemented in any of the codegen prompts — pick JWT or scaffold sessions yourself afterwards.)
+
+## Platform support
+
+macOS and Linux. The installer uses symlinks and the file-count check shells out to `find`/`wc`; Windows users should run inside WSL2.
 
 ## Install
 
+Pick one of:
+
 ```bash
-npx backend-design install
+# Durable: install globally, then symlink. Survives npm cache eviction.
+npm i -g backend-design
+backend-design install
+
+# Or from a clone (most stable for development):
+git clone https://github.com/jwolfsohn/backend-design && cd backend-design
+node bin/backend-design.mjs install
 ```
 
-Symlinks the skill into `~/.claude/skills/backend-design`. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
+Either way you'll get `~/.claude/skills/backend-design` pointing at the package. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
 
-Uninstall: `npx backend-design uninstall`.
+`npx backend-design install` works but symlinks into the npx cache, which can be pruned without warning — use one of the methods above for any non-throwaway setup.
+
+Uninstall: `backend-design uninstall`.
 
 ## Use
 
@@ -88,8 +102,8 @@ All design state lives under `.backend-design/`:
 | `config.json` | `start` command | Chosen stack, auth strategy, output dir |
 | `state/screens.json` | Phase 1 Agent 1 (sonnet) | Every screen, entities displayed, data fetches, nav graph |
 | `state/components.json` | Phase 1 Agent 2 (sonnet) | Every component, props, hooks, shared state |
-| `state/endpoints.json` | Phase 1 Agent 3 (haiku) + Phase 2 refine | Every API call + implied CRUD |
-| `state/forms.json` | Phase 1 Agent 4 (haiku) | Every form, button, auth surface |
+| `state/endpoints.json` | Phase 1 Agent 3 (sonnet) + Phase 2 refine | Every API call + implied CRUD |
+| `state/forms.json` | Phase 1 Agent 4 (sonnet) | Every form, button, auth surface |
 | `state/entities.json` | Phase 2 Plan agent | Inferred Postgres tables with columns/indexes |
 | `state/relationships.json` | Phase 2 Plan agent | FK relationships with cardinalities |
 | `state/auth.json` | Phase 2 Plan agent | JWT/bcrypt config, signup/login/etc. flags |
@@ -115,20 +129,20 @@ backend/
   README.md
 ```
 
-See `prompts/codegen-*.md` for each stack's exact layout.
+The Next.js stack adds files inside the existing project (no separate `backend/` dir) — `app/api/<resource>/route.ts` per endpoint, `lib/db.ts`, `lib/auth.ts`, `prisma/schema.prisma`. The Fastify and Hono stacks mirror the Express layout with stack-appropriate names (`plugins/`, sub-apps). The FastAPI stack uses `app/models/`, `app/routers/`, `app/schemas/` plus `alembic/`. See `prompts/codegen-*.md` for each stack's exact layout.
 
 ## Cost
 
-Token usage on a medium Next.js app (~200 source files):
+Rough token budget on a medium Next.js app (~200 source files); real cost varies with repo complexity and current Anthropic pricing — treat the per-phase numbers as ballparks, not benchmarks.
 
-| Phase | Tokens | Cost |
-|-------|--------|------|
-| Phase 1 — 4 parallel inventory agents (Haiku ×2 + Sonnet ×2) | ~80K | ~$0.40 |
-| Phase 2 — synthesis + validation (Sonnet) | ~25K | ~$0.25 |
-| Phase 4 — codegen (Sonnet) | ~40K | ~$0.40 |
-| **Total** | ~145K | **~$1–3** |
+| Phase | Tokens (approx) |
+|-------|-----------------|
+| Phase 1 — 4 parallel inventory agents (all Sonnet) | ~80K |
+| Phase 2 — synthesis + validation (Sonnet) | ~25K |
+| Phase 4 — codegen (Sonnet) | ~40K |
+| **Total** | **~145K** |
 
-On larger codebases (>500 files) the `start` command and the skill itself will warn and offer to scope down.
+Expect a few dollars per end-to-end run on a typical app, more on large or convoluted ones. On codebases >500 source files the `start` command warns; >1500 it refuses and asks you to scope down.
 
 ## How it works
 
@@ -136,8 +150,8 @@ On larger codebases (>500 files) the `start` command and the skill itself will w
 
 1. Reads `.backend-design/config.json` to know which stack to target.
 2. Runs a pre-flight check (frontend detected, file count under threshold).
-3. Spawns four `Explore` subagents in parallel for the frontend inventory. Each writes one JSON file. Agents 3 & 4 use Haiku; 1 & 2 use Sonnet.
-4. Spawns one `Plan` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`.
+3. Spawns four `general-purpose` subagents (Sonnet) in parallel for the frontend inventory. Each writes one JSON file. (`Explore` is read-only, so it can't be used here.)
+4. Spawns one `general-purpose` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`.
 5. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
 6. Renders `backend-design.md` from the JSON and pauses for your approval.
 7. Reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md`, then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend. Verifies the scaffold compiles before reporting done.

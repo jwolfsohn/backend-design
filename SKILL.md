@@ -1,11 +1,13 @@
 ---
 name: backend-design
-description: Analyze an existing frontend (Next.js, React, Vue, Nuxt, Svelte, SvelteKit, Angular, Astro, Solid, Qwik, Remix, Gatsby, HTMX, or vanilla HTML/JS) and scaffold a matching backend in the user's chosen stack (Express+Prisma, Fastify+Prisma, Hono+Drizzle, Next.js API routes, or FastAPI). Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. Two-step output — first a reviewable design doc (endpoints, DB schema, auth), then scaffolded code after the user approves.
+description: Design and scaffold a backend for an existing frontend. Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. The user sees two checkpoints — a reviewable design doc (endpoints, DB schema, auth), then scaffolded code after they approve.
 ---
 
 # backend-design
 
-You are about to design and scaffold a backend for an **existing frontend** in the current working directory. The frontend can be in any modern web framework — the CLI detects it automatically. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
+You are about to design and scaffold a backend for an **existing frontend** in the current working directory. Supported frontends (auto-detected by the CLI): Next.js (App or Pages Router), React SPA, Vue, Nuxt, Svelte, SvelteKit, Angular 17+, Astro, SolidJS / SolidStart, Qwik, Remix / React Router v7, Gatsby, HTMX, vanilla HTML/JS. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
+
+**Skill root:** locate this skill's directory once at the start. It's the directory containing this `SKILL.md`. Refer to it as `<SKILL_DIR>` below — typical values are `~/.claude/skills/backend-design` (default install) or `~/.claude/plugins/.../skills/backend-design` (plugin install). Resolve all `<SKILL_DIR>/...` references against the actual location, not the literal string.
 
 The stack is **not fixed** — it's selected by the user via `npx backend-design start` before activating this skill, and recorded in `.backend-design/config.json`. Supported stacks:
 
@@ -23,7 +25,7 @@ Execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 u
 
 All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 Plan agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them; the codegen agent in Phase 4 reads them directly.
 
-A validator at `~/.claude/skills/backend-design/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing.
+A validator at `<SKILL_DIR>/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing. If the validator emits the same error class three runs in a row, stop and surface the unfixable issues to the user — do not loop indefinitely.
 
 ---
 
@@ -37,7 +39,7 @@ Before Phase 1:
 
 2. **Confirm to the user** in one line: `Targeting <config.stack.label> with <config.auth.strategy> auth on <config.frontend.framework> → <config.output_dir>`.
 
-3. **Load framework patterns.** Read `~/.claude/skills/backend-design/prompts/frontend-patterns.md`. Extract the section whose heading matches `config.frontend.patterns_key`. You will inject this section into each Phase-1 agent's prompt so they search the right files. Keep it handy — call it `<<PATTERNS>>` in the agent briefs below.
+3. **Load framework patterns.** Read `<SKILL_DIR>/prompts/frontend-patterns.md`. Extract the section whose heading matches `config.frontend.patterns_key`. You will inject this section into each Phase-1 agent's prompt so they search the right files. Keep it handy — call it `<<PATTERNS>>` in the agent briefs below.
 
    If `patterns_key` does not match any section in `frontend-patterns.md`, stop and tell the user: "Your detected framework `<framework>` is unrecognized. Edit `.backend-design/config.json` or use `prompts/frontend-patterns.md` patterns manually."
 
@@ -52,16 +54,16 @@ Before Phase 1:
 
 Goal: catalog **every screen, every component, every interactive element, and every relationship between them** — enough that someone could rebuild the UI from the inventory alone. Be exhaustive, not selective. Partial coverage here corrupts every later phase.
 
-Spawn **four `Explore` subagents in parallel** (single message, four tool calls). Each writes a single JSON file. Pin the model per agent to control cost — Agents 3 and 4 are mechanical and can run on Haiku.
+Spawn **four `general-purpose` subagents in parallel** (single message, four tool calls). Each writes a single JSON file. `general-purpose` is the correct agent type here — `Explore` is read-only and cannot use `Write`, so it can't produce the output files this phase requires.
 
-| Agent | Model | Output file | Breadth |
-|-------|-------|-------------|---------|
-| 1. Screens & navigation | `sonnet` | `.backend-design/state/screens.json` | very thorough |
-| 2. Component tree & shared state | `sonnet` | `.backend-design/state/components.json` | very thorough |
-| 3. Network calls & API contracts | `haiku` | `.backend-design/state/endpoints.json` | very thorough |
-| 4. Forms, buttons, auth surface | `haiku` | `.backend-design/state/forms.json` | very thorough |
+| Agent | Model | Output file |
+|-------|-------|-------------|
+| 1. Screens & navigation | `sonnet` | `.backend-design/state/screens.json` |
+| 2. Component tree & shared state | `sonnet` | `.backend-design/state/components.json` |
+| 3. Network calls & API contracts | `sonnet` | `.backend-design/state/endpoints.json` |
+| 4. Forms, buttons, auth surface | `sonnet` | `.backend-design/state/forms.json` |
 
-Pass the `model` parameter to the `Agent` tool when spawning each agent (e.g. `Agent({ subagent_type: "Explore", model: "haiku", prompt: "..." })`).
+Pass the `model` parameter to the `Agent` tool when spawning each agent (e.g. `Agent({ subagent_type: "general-purpose", model: "sonnet", prompt: "..." })`). All four agents run on Sonnet — Haiku is not reliable enough for the inference required (template-literal URL resolution, validation rule extraction, existing-handler detection).
 
 Each agent **writes exactly one JSON file**. Do not let them output markdown — only the JSON. If an agent writes markdown by mistake, re-spawn it with the schema reminder.
 
@@ -164,9 +166,32 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 >   "consuming_component": "app/posts/page.tsx",
 >   "auth_header": "Bearer token from localStorage auth_token",
 >   "existing_handler": null,
+>   "is_external": false,
+>   "external_origin": null,
 >   "evidence": ["lib/api.ts:34"]
 > }
 > ```
+>
+> Endpoints may also carry `required_role: string | string[] | null` (default null) — set in Phase 2, not here. Leave it absent in Phase 1.
+>
+> **List-fetch enrichment.** For every GET that returns an array (i.e. a list endpoint), inspect the consuming screen for pagination, filter, and sort UI and capture them:
+>
+> ```json
+> {
+>   "method": "GET",
+>   "path": "/api/posts",
+>   "response": "Post[]",
+>   "pagination": {"strategy": "cursor", "limit_param": "limit", "cursor_param": "cursor"},
+>   "filterable_fields": ["status", "author_id"],
+>   "sortable_fields": ["created_at", "title"]
+> }
+> ```
+>
+> Strategies: `"cursor"` (infinite scroll, "load more" button, cursor in URL), `"offset"` (numbered page links, `?page=2`), or `null` (no pagination — small fixed list, no scroll trigger). Default `limit_param: "limit"`, `cursor_param: "cursor"` (cursor strategy) or `offset_param: "offset"` (offset strategy). Filterable fields: search inputs, dropdown filters, status tabs — capture the entity column name they correspond to. Sortable fields: sortable table headers, sort dropdowns.
+>
+> **Distinguish user-backend calls from third-party API calls.** If the URL is an absolute URL whose origin is not the app itself — e.g. `https://api.stripe.com/...`, `https://api.openai.com/...`, `https://maps.googleapis.com/...` — set `is_external: true`, `external_origin: "<host>"`, leave `path` as the full URL, and do NOT generate a backend handler for it. Relative URLs (`/api/...`) and same-origin URLs are `is_external: false`.
+>
+> **Detect incoming webhooks.** If you find an existing server-side handler under `app/api/webhook/`, `pages/api/webhook/`, `src/routes/api/webhook/`, `app/api/webhooks/`, or any handler that reads a header matching `*-Signature` (e.g. `Stripe-Signature`, `X-Hub-Signature-256`), add a corresponding entry with `is_webhook: true`, `webhook_source: "<inferred-source>"` (stripe, github, etc., from path or signature header), `signature_header: "<exact header name>"`, and `triggered_by: []` (webhooks are not triggered by the UI). Include these in `endpoints.json` so codegen scaffolds the signature verification.
 >
 > Resolve template literals and path params where possible. If a Next.js API route handler already exists, set `existing_handler` to its file path so it's not duplicated. Do not output markdown — only the JSON file.
 
@@ -189,9 +214,11 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 >       "id": "NewPostForm",
 >       "file": "components/NewPostForm.tsx:12",
 >       "purpose": "Create a new post",
+>       "multipart": false,
 >       "inputs": [
 >         {"name": "title", "type": "text", "validation": {"required": true, "minLength": 3, "maxLength": 200}},
->         {"name": "body", "type": "textarea", "validation": {"required": true}}
+>         {"name": "body", "type": "textarea", "validation": {"required": true}},
+>         {"name": "cover_image", "type": "file", "accept": "image/*", "validation": {"required": false, "max_size_mb": 5}}
 >       ],
 >       "submits_to": "POST /api/posts",
 >       "on_success": "redirect to /posts/[id]",
@@ -219,23 +246,29 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 > }
 > ```
 >
-> Action values: `api_call`, `navigate`, `local_state`, `open_modal`. Set `destructive: true` for Delete/Remove/Cancel. Do not output markdown — only the JSON file.
+> Action values: `api_call`, `navigate`, `local_state`, `open_modal`. Set `destructive: true` for Delete/Remove/Cancel.
+>
+> **File inputs.** For every `<input type="file">` (or `accept` attr, or framework equivalent), set `type: "file"` and capture `accept` (MIME globs) and any size validation. If the form contains any file input, set `multipart: true` at the form level — the endpoint will need to accept `multipart/form-data`. If the form uses `FormData` in JS without an `<input type="file">`, still set `multipart: true` and note the field names.
+>
+> Do not output markdown — only the JSON file.
 
 ---
 
 #### Phase 1b — Cross-file self-check
 
-After all four agents return, before moving on:
+After all four agents return, run the validator:
 
-1. Confirm all four JSON files exist and parse: `for f in screens components endpoints forms; do node -e "JSON.parse(require('fs').readFileSync('.backend-design/state/$f.json'))" || echo "FAIL: $f.json"; done`
-2. Spot-check: does every network call in `endpoints.json` have a matching `triggered_by` element that exists in `forms.json` (a form or button)? Does every component named in `screens[].children` appear in `components.json`?
-3. If you find gaps, re-spawn the relevant agent with a tighter brief. Do not paper over gaps in the synthesis step.
+```bash
+node <SKILL_DIR>/validate.mjs
+```
+
+It will fail if any of the four files are missing or unparseable, and report Phase-1 cross-file issues (endpoints without UI triggers, components referenced by screens but missing from `components.json`, etc.). Fix gaps by re-spawning the relevant agent with a tighter brief — do not paper over gaps in the synthesis step. Apply the same three-iteration cap as Phase 2.
 
 ---
 
 ### Phase 2 — Design synthesis
 
-Spawn **one `Plan` subagent** with `model: "sonnet"`. It reads the four JSON files from Phase 1, infers entities and relationships, refines endpoints, and writes more JSON files plus the human-readable design doc.
+Spawn **one `general-purpose` subagent** with `model: "sonnet"`. It reads the four JSON files from Phase 1, infers entities and relationships, and refines endpoints. (`Plan` is read-only and cannot write files; use `general-purpose`.)
 
 Give it this brief:
 
@@ -314,19 +347,51 @@ Give it this brief:
 > - Login form → `POST /auth/login`
 > - Logout button → `POST /auth/logout` (or stateless)
 >
+> **Multipart endpoints.** If a form in `forms.json` has `multipart: true`, the endpoint it submits to must have `content_type: "multipart/form-data"` and `request_body` should list each non-file field by name + type plus each file field as `{ "<name>": "file", "accept": "<mime>", "max_size_mb": N }`. Other endpoints default to `content_type: "application/json"` (omit when JSON).
+>
+> **Path-param scoping (nested resources).** For nested URLs like `/orgs/:orgId/posts`, set `path_params` on the endpoint:
+>
+> ```json
+> {
+>   "method": "GET",
+>   "path": "/api/orgs/:orgId/posts",
+>   "path_params": [{"name": "orgId", "type": "uuid", "scopes_query": true, "parent_entity": "Org"}],
+>   "response": "Post[]"
+> }
+> ```
+>
+> `scopes_query: true` means the handler must filter the list/detail query by this param (e.g. `WHERE org_id = :orgId`) AND check the authenticated user has access to the parent entity. Apply this to every nested list, detail, create, update, and delete. The "child" FK column name is `<parent_table>_id` by convention. Leaf params on detail routes (e.g. `:id` at the end of `/api/orgs/:orgId/posts/:id`) get `scopes_query: false` — they identify the record, not scope the query.
+>
+> **Auth-flow endpoints (derive from `auth.json` flags):**
+> - `password_reset: true` → `POST /auth/password-reset/request` (body: `{ email }`) + `POST /auth/password-reset/confirm` (body: `{ token, new_password }`)
+> - `email_verification: true` → `POST /auth/verify-email` (body: `{ token }`) + `POST /auth/verify-email/resend` (auth required)
+> - Each entry in `oauth_providers` → `GET /auth/oauth/<provider>/start` + `GET /auth/oauth/<provider>/callback`
+>
+> All of these should have `auth: "none"` (the request is unauthenticated; the token in the body is the authenticator). Set `triggered_by` to the auth-surface evidence from `forms.json` (e.g. the "Forgot password" link's file:line).
+>
 > For each added endpoint, set `triggered_by` to the UI element file:line that justifies it. Add an `auth` field (`required` or `none`) to every endpoint.
+>
+> **RBAC.** If `auth.rbac_roles` is non-empty, derive `required_role` per endpoint:
+> - If the endpoint is triggered exclusively from a screen that's clearly admin-only (e.g. path under `/admin/`, "Admin" in the screen id/label, an admin role gate visible in the component tree), set `required_role: "admin"` (use the matching role from `auth.rbac_roles`).
+> - For endpoints triggered from a screen with a per-role gate, set `required_role` to the gating role.
+> - For endpoints with no clear role gate, leave `required_role: null`. Don't speculate.
+> - Every `required_role` value must already exist in `auth.rbac_roles` — if you'd write a role that isn't there, surface it as an Open Question instead.
 >
 > **Do not invent features the UI does not imply.** Do not add admin endpoints unless an admin page exists in `screens.json`. Be skeptical of speculative endpoints.
 >
+> **Skip external endpoints.** Endpoints with `is_external: true` are calls to third-party services (Stripe, OpenAI, etc.). Do not refine them, do not derive implied CRUD around them, and do not assign them an `auth` field. Carry them through unchanged so the design doc can list them under "External integrations".
+>
 > Write all four artifacts. Do not produce markdown — only JSON.
 
-After the Plan agent finishes, **run the validator**:
+After the synthesis agent finishes, **run the validator**:
 
 ```bash
-node ~/.claude/skills/backend-design/validate.mjs
+node <SKILL_DIR>/validate.mjs
 ```
 
-If it exits non-zero, read the errors, fix them by editing the JSON files directly (use `Edit`), and re-run. **Do not proceed to the markdown render or Phase 3 until validation passes.** Warnings are OK to leave but should be acknowledged in Open Questions.
+If it exits non-zero, read the errors, fix them by editing the JSON files directly (use `Edit`), and re-run. **Do not proceed to the markdown render or Phase 3 until validation passes.** Warnings are OK to leave but should be acknowledged in Open Questions. Cap fixup attempts at **three iterations**; if the same error class persists after three passes, stop and surface the unfixable issues to the user.
+
+If the synthesis produced **zero entities** (e.g. a marketing-only frontend with no forms or data), do not proceed to codegen. Tell the user: "No backend obligations detected — the UI doesn't imply any persistent state or API calls. Nothing to scaffold." Stop.
 
 Once validation passes, render `backend-design.md` at repo root from the JSON. You (the orchestrator) do this with `Read` + `Write` — no agent needed. Structure:
 
@@ -335,8 +400,9 @@ Once validation passes, render `backend-design.md` at repo root from the JSON. Y
 3. **Data model** — one section per entity from `entities.json`, with column tables.
 4. **API endpoints** — one row per endpoint from `endpoints.json` (`Method | Path | Auth | Body | Response | Triggered by`).
 5. **Auth model** — rendered from `auth.json`.
-6. **Coverage check** — table mapping every screen + every interactive element to the backend artifact that supports it. Flag unmapped UI as Open Questions.
-7. **Open questions** — anything ambiguous, plus all validator warnings.
+6. **External integrations** — list of endpoints with `is_external: true`, grouped by `external_origin`. These are NOT in the generated backend; they document third-party services the frontend depends on.
+7. **Coverage check** — table mapping every screen + every interactive element to the backend artifact that supports it. Flag unmapped UI as Open Questions.
+8. **Open questions** — anything ambiguous, plus all validator warnings.
 
 ---
 
@@ -356,15 +422,15 @@ Only proceed to Phase 4 when the user gives explicit approval ("looks good", "pr
 
 ### Phase 4 — Code scaffolding
 
-The codegen prompt is **stack-specific**. Read `.backend-design/config.json` to get `stack.id`, then read the matching prompt file from this skill's `prompts/` directory:
+The codegen prompt is **stack-specific**. Read `.backend-design/config.json` to get `stack.id`, then read the matching prompt file from `<SKILL_DIR>/prompts/`:
 
 | `stack.id`            | Prompt file to read |
 |-----------------------|---------------------|
-| `node-express-prisma` | `~/.claude/skills/backend-design/prompts/codegen-node-express-prisma.md` |
-| `node-fastify-prisma` | `~/.claude/skills/backend-design/prompts/codegen-node-fastify-prisma.md` |
-| `node-hono-drizzle`   | `~/.claude/skills/backend-design/prompts/codegen-node-hono-drizzle.md` |
-| `nextjs-prisma`       | `~/.claude/skills/backend-design/prompts/codegen-nextjs-prisma.md` |
-| `python-fastapi`      | `~/.claude/skills/backend-design/prompts/codegen-python-fastapi.md` |
+| `node-express-prisma` | `<SKILL_DIR>/prompts/codegen-node-express-prisma.md` |
+| `node-fastify-prisma` | `<SKILL_DIR>/prompts/codegen-node-fastify-prisma.md` |
+| `node-hono-drizzle`   | `<SKILL_DIR>/prompts/codegen-node-hono-drizzle.md` |
+| `nextjs-prisma`       | `<SKILL_DIR>/prompts/codegen-nextjs-prisma.md` |
+| `python-fastapi`      | `<SKILL_DIR>/prompts/codegen-python-fastapi.md` |
 
 Use `Read` to load the relevant prompt file. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass that file's contents as the prompt, prefixed with:
 
@@ -374,9 +440,34 @@ Use `Read` to load the relevant prompt file. Spawn **one `general-purpose` subag
 >
 > <pasted contents of the codegen-*.md file>
 
-After the agent finishes, run the **stack-specific verification commands** listed at the bottom of the codegen prompt file. For Node stacks: `pnpm install`, ORM-specific generate command, `pnpm tsc --noEmit`. For Python: `pip install -e .`, `alembic check`, import smoke test.
+After the agent finishes, run the **stack-specific verification commands** listed at the bottom of the codegen prompt file. For Node stacks: `<PM> install`, ORM-specific generate command, `<PM> tsc --noEmit`. For Python: `pip install -e .` (or `uv pip install -e .`), `alembic check`, import smoke test.
 
-If any verification step fails, fix it directly with `Edit` (these are usually small mistakes — typos, missing imports). Do not declare the task complete until verification passes.
+**Startup smoke test (Node stacks).** After the static checks pass, run a startup smoke test to catch errors that `tsc` doesn't see (missing env vars, plugin order, runtime imports):
+
+```bash
+cd <output_dir>
+JWT_SECRET=test DATABASE_URL=postgresql://postgres:postgres@localhost:5432/none \
+  timeout 8 <PM> dev 2>&1 | tee /tmp/bd-smoke.log &
+SMOKE_PID=$!
+sleep 6
+kill $SMOKE_PID 2>/dev/null || true
+grep -Eqi "listen(ing)?|started server|ready" /tmp/bd-smoke.log || {
+  echo "Startup smoke test failed — server did not announce 'listening' within 6s."
+  cat /tmp/bd-smoke.log
+  exit 1
+}
+```
+
+The DB host is intentionally unreachable; Prisma/Drizzle connect lazily on the first request, so startup should still announce "listening". If your stack instead opens a connection at boot, swap in a real local Postgres or skip this step and document why.
+
+**Startup smoke test (Python/FastAPI).** Run `python -c "from app.main import app"` (already in the verification list). This catches model/router import errors at the import level, which is the most common failure mode.
+
+If a verification step fails, classify before fixing:
+- **Local mistakes** (typo, missing import, wrong type) — fix directly with `Edit`. Budget ≤5 such edits.
+- **Structural issues** (missing files, route/schema mismatch, multiple TypeScript errors across files) — re-spawn the codegen agent with a focused follow-up brief that quotes the failing output. Budget at most one re-spawn.
+- If both budgets are exhausted, stop and report the remaining failures to the user rather than declaring success.
+
+Do not declare the task complete until verification passes.
 
 Then report to the user: stack used, output directory, entity count, endpoint count, and the next-step command from the codegen prompt's "README run commands" section.
 
