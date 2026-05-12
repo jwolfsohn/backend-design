@@ -25,10 +25,10 @@ Each framework has dedicated search patterns in `prompts/frontend-patterns.md` s
 ## What it does
 
 1. **Inventories** every screen, component, network call, form, button, and auth surface — in parallel, writing structured JSON state.
-2. **Synthesizes** entities, relationships, endpoints, and an auth model from the inventory.
+2. **Synthesizes** entities, relationships, endpoints, an auth model, and a list of open product-intent questions **each with a recommended answer** — so you have a default to accept rather than an open prompt to stare at.
 3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
-4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions.
-5. **Reviews** — produces a human-readable `backend-design.md` and pauses for your approval.
+4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets, per-source webhook secrets, email provider keys, `UPLOADS_DIR`), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions and a copy-pasteable `backend-design.env.example` at the repo root.
+5. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
 6. **Scaffolds** a runnable backend in your chosen stack once you approve.
 
 On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
@@ -100,6 +100,7 @@ The skill walks through inventory, synthesis, validation, review, and code gener
 | `npx backend-design validate` | Validate `.backend-design/state/*.json` against invariants |
 | `npx backend-design gaps` | Re-detect missing env vars, unwired buttons, missing auth UI; rewrite `backend-design-next-steps.md` |
 | `npx backend-design status` | Show phase progress, frontend signature, and open gap counts |
+| `npx backend-design reset` | Delete `.backend-design/` and the generated docs to start fresh (asks for confirmation) |
 | `npx backend-design help` | Show usage |
 
 ## State files
@@ -113,11 +114,20 @@ All design state lives under `.backend-design/`:
 | `state/components.json` | Phase 1 Agent 2 (sonnet) | Every component, props, hooks, shared state |
 | `state/endpoints.json` | Phase 1 Agent 3 (sonnet) + Phase 2 refine | Every API call + implied CRUD (+ placeholders in vibe-coder mode) |
 | `state/forms.json` | Phase 1 Agent 4 (sonnet) | Every form, button, auth surface |
-| `state/entities.json` | Phase 2 Plan agent | Inferred Postgres tables with columns/indexes |
-| `state/relationships.json` | Phase 2 Plan agent | FK relationships with cardinalities |
-| `state/auth.json` | Phase 2 Plan agent | JWT/bcrypt config, signup/login/etc. flags |
+| `state/entities.json` | Phase 2 synthesis agent | Inferred Postgres tables with columns/indexes |
+| `state/relationships.json` | Phase 2 synthesis agent | FK relationships with cardinalities |
+| `state/auth.json` | Phase 2 synthesis agent | JWT/bcrypt config, signup/login/etc. flags |
+| `state/open_questions.json` | Phase 2 synthesis agent | Product-intent ambiguities, each with the agent's recommended answer |
 | `gaps.json` | Phase 2.5 (`detect-gaps.mjs`) | Open and closed gaps with severity, fix instructions, evidence |
 | `checkpoint.json` | End of each phase | Phase timestamps + frontend signature for Phase 0 resumption |
+
+At the repo root, Phase 2 / 2.5 also write:
+
+| File | Written by | Contents |
+|------|------------|----------|
+| `backend-design.md` | `scripts/render-design.mjs` | Deterministic design doc — 8 sections, regenerated from state JSON each run |
+| `backend-design-next-steps.md` | `scripts/detect-gaps.mjs` | Action checklist: blockers, wire-up TODOs, info items |
+| `backend-design.env.example` | `scripts/render-env-example.mjs` | Copy-pasteable `.env` template with every var the design needs, commented |
 
 Every JSON entry includes `evidence: ["file:line"]` so you can trace any decision back to the UI.
 

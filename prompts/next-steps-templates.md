@@ -49,6 +49,33 @@ STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 For production, get the value from https://dashboard.stripe.com/webhooks after you create the endpoint.
 
+## missing_env_var:EMAIL_PROVIDER
+
+**Why**: Your auth flow includes password reset and/or email verification, so the generated backend's `lib/email.ts` stub needs a real provider to send mail. Without one, reset/verification tokens will be created but never delivered — users will be stuck.
+
+**How**: Pick one provider and add its key to `.env`:
+
+| Provider | Get a key | Free tier |
+|---|---|---|
+| **Resend** (recommended for new projects) | https://resend.com/api-keys | 3,000/mo |
+| **SendGrid** | https://app.sendgrid.com/settings/api_keys | 100/day |
+| **Mailgun** | https://app.mailgun.com/app/sending/domains | 5,000/mo for 3 months |
+| **Postmark** (best deliverability) | https://account.postmarkapp.com/api_tokens | 100/mo |
+| **Generic SMTP** | Your existing mail server | n/a |
+
+Then edit `lib/email.ts` in the generated backend to call your provider's SDK instead of `console.log`-ing. Or ask Claude: *"Wire `lib/email.ts` to use Resend with the RESEND_API_KEY from env."*
+
+## missing_env_var:UPLOADS_DIR
+
+**Why**: Your design includes multipart endpoints that accept file uploads. The codegen scaffolds a `lib/storage.ts` stub that writes to disk under `UPLOADS_DIR`. If unset, it defaults to `./uploads/` — fine for local dev, but you'll want object storage (S3/R2/etc.) for production.
+
+**How**: For local dev, you can leave this unset and `./uploads/` will be used. To set explicitly, add to `.env`:
+```
+UPLOADS_DIR=./uploads
+```
+
+For production, replace the `lib/storage.ts` stub with an S3/R2 implementation rather than relying on local disk (containers and serverless runtimes have ephemeral filesystems). Ask Claude: *"Swap `lib/storage.ts` from local disk to S3 using the AWS SDK v3."*
+
 ## missing_env_var
 
 **Why**: This environment variable is referenced by your generated backend but not set in `.env`.

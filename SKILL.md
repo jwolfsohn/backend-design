@@ -23,7 +23,7 @@ The stack is **not fixed** — it's selected by the user via `npx backend-design
 
 Execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
 
-All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 Plan agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them; the codegen agent in Phase 4 reads them directly.
+All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 synthesis agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them by `scripts/render-design.mjs`; the codegen agent in Phase 4 reads them directly.
 
 A validator at `<SKILL_DIR>/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing. If the validator emits the same error class three runs in a row, stop and surface the unfixable issues to the user — do not loop indefinitely.
 
@@ -45,13 +45,13 @@ Run **before** the pre-flight check. Decides whether to start fresh or skip ahea
    |---|---|
    | `fresh` | No prior state. Proceed to Pre-flight → Phase 1. |
    | `resume_phase_2` | Phase 1 inventory is on disk and frontend unchanged. Skip Phase 1; proceed to Phase 2. |
-   | `resume_phase_2_5` | Phase 2 synthesis on disk. Skip Phases 1+2; render `backend-design.md` from existing state, then proceed to Phase 2.5. |
+   | `resume_phase_2_5` | Phase 2 synthesis on disk. Skip Phases 1+2; run `node <SKILL_DIR>/scripts/render-design.mjs` to regenerate `backend-design.md` from existing state, then proceed to Phase 2.5. Never hand-render — the script is the source of truth. |
    | `resume_phase_3` | Design and next-steps docs exist. Skip everything except the Phase 3 review gate — print the summary and wait for approval. |
    | `resume_phase_4` | Design approved but scaffold not generated. Skip to Phase 4 directly. |
-   | `gaps_only` | Scaffold complete, frontend unchanged. Run only Phase 2.5 (`detect-gaps.mjs`) to surface any newly closed/opened items. Report and stop — do not re-scaffold. |
+   | `gaps_only` | Scaffold complete, frontend unchanged. Run `node <SKILL_DIR>/scripts/detect-gaps.mjs` followed by `node <SKILL_DIR>/scripts/render-env-example.mjs` to refresh both `./backend-design-next-steps.md` and `./backend-design.env.example`. Report and stop — do not re-scaffold or re-render the design doc. |
    | `fresh_with_gaps_preserved` | Frontend changed since the last run. Re-run from Phase 1. **Preserve** `.backend-design/gaps.json` so closure detection still works on this run. |
 
-4. **Tell the user one line of context** (echo the `reason` field): `Resuming at Phase 4 — design approved, scaffold not yet generated.` etc.
+4. **Tell the user one line of context** (echo the `reason` field): `Resuming at Phase 4 — design approved, scaffold not yet generated.` etc. For `gaps_only`, say something like `Scaffold already generated and frontend unchanged — refreshing ./backend-design-next-steps.md and ./backend-design.env.example only.` so it's clear no design or codegen work is being repeated.
 
 After each subsequent phase succeeds, **update the checkpoint** via `Read` + `Write` on `.backend-design/checkpoint.json` (merge fields; never overwrite the whole file blindly):
 
@@ -210,7 +210,7 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 > }
 > ```
 >
-> Endpoints may also carry `required_role: string | string[] | null` (default null) — set in Phase 2, not here. Leave it absent in Phase 1.
+> Endpoints may also carry `required_role: string | string[] | null` (default null) and `content_type: "multipart/form-data" | "application/json"` — both are set in Phase 2, not here. Leave them absent in Phase 1.
 >
 > **List-fetch enrichment.** For every GET that returns an array (i.e. a list endpoint), inspect the consuming screen for pagination, filter, and sort UI and capture them:
 >
@@ -314,7 +314,7 @@ Give it this brief:
 
 > Read all four files in `.backend-design/state/` (`screens.json`, `components.json`, `endpoints.json`, `forms.json`). They are the authoritative inventory of the React/Next.js frontend.
 >
-> Produce **four output artifacts**:
+> Produce **five output artifacts**:
 >
 > **1. `.backend-design/state/entities.json`** — a JSON array of Postgres entities inferred from the UI. Each entity:
 >
@@ -435,11 +435,28 @@ Give it this brief:
 > }
 > ```
 >
-> Infer method from the button label: "Delete/Remove/Cancel" → `DELETE`; "Edit/Update/Save" → `PATCH`; everything else → `POST`. Infer auth: if any screen containing the button has `auth_required: true`, set `auth: "required"`; otherwise `auth: "none"`. Infer path from a slugified version of the label scoped under the screen's URL when possible (e.g. button "Become a host" → `/api/hosts/apply`). When in doubt, prefix with `/api/` and slugify the label. **Set `temporary: true` and `placeholder_reason` on every such endpoint** — these fields signal codegen to scaffold a 501 stub rather than a real handler. Do not invent request body fields; leave `request_body: {}`. Do not infer indices or relations from a placeholder. If `vibe_coder` is false or unset, **never** generate placeholder endpoints — flag orphan buttons as gaps in Phase 2.5 instead.
+> Infer method from the button label: "Delete/Remove" → `DELETE`; "Edit/Update/Save" → `PATCH`; everything else → `POST`. Treat "Cancel" as `POST` only if the button is clearly destructive (e.g. "Cancel subscription"); ambiguous labels like "Cancel" inside a modal typically just close the dialog and should not become endpoints. **Always set `auth: "none"` on placeholders**, even when the origin screen is auth-gated — codegen strips auth middleware from placeholder routes anyway ([codegen-placeholders.md](prompts/codegen-placeholders.md)), so setting `required` would mislead readers of `backend-design.md`. The user re-adds auth when they replace the stub. Infer path from a slugified version of the label scoped under the screen's URL when possible (e.g. button "Become a host" → `/api/hosts/apply`). When in doubt, prefix with `/api/` and slugify the label. **Set `temporary: true` and `placeholder_reason` on every such endpoint** — these fields signal codegen to scaffold a 501 stub rather than a real handler. Do not invent request body fields; leave `request_body: {}`. Do not infer indices or relations from a placeholder. If `vibe_coder` is false or unset, **never** generate placeholder endpoints — flag orphan buttons as gaps in Phase 2.5 instead.
 >
 > **Skip external endpoints.** Endpoints with `is_external: true` are calls to third-party services (Stripe, OpenAI, etc.). Do not refine them, do not derive implied CRUD around them, and do not assign them an `auth` field. Carry them through unchanged so the design doc can list them under "External integrations".
 >
-> Write all four artifacts. Do not produce markdown — only JSON.
+> **5. `.backend-design/state/open_questions.json`** — a JSON array of **product-intent ambiguities** that the design surfaces but cannot resolve from the UI alone. These are the questions where the codebase doesn't have a single right answer and the human has to choose. **Each question must include a recommendation** — your honest best-practice opinion given what you observed in the frontend — so the user has a default to accept rather than a question they have to answer cold. Schema:
+>
+> ```json
+> [
+>   {
+>     "id": "reserve-button-behavior",
+>     "title": "Reserve button behavior",
+>     "question": "Today the Reserve button only fires alert('Reserved!'). Do you want this backend to scaffold a bookings table and POST /api/bookings now, or stay read-only until the booking UI exists?",
+>     "context": "The form's date/guests inputs imply a minimal booking { listing_id, check_in, check_out, guests, user_id } shape — but user_id requires auth, which the UI also lacks.",
+>     "recommendation": "Stay read-only for v1. Scaffolding bookings before the booking UI + auth exist tends to go stale fast. Add bookings in a follow-up once the user actually navigates the reservation flow.",
+>     "evidence": ["components/Reserve.tsx:34"]
+>   }
+> ]
+> ```
+>
+> Surface 3–8 questions for a typical app. Look for: (a) buttons/forms that fire alerts/console.logs (stub UI hinting at unbuilt features), (b) missing admin/CRUD UI that the data model implies, (c) search/filter UI that's wired to nothing, (d) static display strings that look like they should be derived from a real backend (e.g. `distance`, `dates`), (e) auth gaps the design depends on but the UI doesn't reflect. **Do NOT include**: env vars, missing accounts, or orphan wire-ups — those live in `backend-design-next-steps.md`. Recommendations should be opinionated and time-aware ("for v1", "until X exists"). If no real product-intent ambiguities exist, write an empty array `[]` — don't pad.
+>
+> Write all five artifacts. Do not produce markdown — only JSON.
 
 After the synthesis agent finishes, **run the validator**:
 
@@ -451,16 +468,24 @@ If it exits non-zero, read the errors, fix them by editing the JSON files direct
 
 If the synthesis produced **zero entities** (e.g. a marketing-only frontend with no forms or data), do not proceed to codegen. Tell the user: "No backend obligations detected — the UI doesn't imply any persistent state or API calls. Nothing to scaffold." Stop.
 
-Once validation passes, render `backend-design.md` at repo root from the JSON. You (the orchestrator) do this with `Read` + `Write` — no agent needed. Structure:
+Once validation passes, render `backend-design.md` at repo root **deterministically** via the script:
+
+```bash
+node <SKILL_DIR>/scripts/render-design.mjs
+```
+
+The script reads the state JSON and writes the markdown. Do not hand-render this file — runs become non-deterministic and diffs become noisy. The script emits these 8 sections:
 
 1. **Overview** — one paragraph inferred from the UI.
 2. **Entity map** — markdown list of entities and relationships with cardinalities.
 3. **Data model** — one section per entity from `entities.json`, with column tables.
-4. **API endpoints** — one row per endpoint from `endpoints.json` (`Method | Path | Auth | Body | Response | Triggered by`).
+4. **API endpoints** — one row per endpoint from `endpoints.json` (`Method | Path | Auth | Body | Response | Triggered by`), with placeholders called out separately.
 5. **Auth model** — rendered from `auth.json`.
-6. **External integrations** — list of endpoints with `is_external: true`, grouped by `external_origin`. These are NOT in the generated backend; they document third-party services the frontend depends on.
-7. **Coverage check** — table mapping every screen + every interactive element to the backend artifact that supports it. Flag unmapped UI as Open Questions.
-8. **Open questions** — product-intent ambiguities only (e.g. "should followers be private by default?", "should the cart merge with server cart on login?"). **Environmental gaps (missing env vars, accounts) and wire-up gaps (orphan buttons, missing auth UI) belong in `backend-design-next-steps.md` — they're generated in Phase 2.5 below, not here.**
+6. **External integrations** — endpoints with `is_external: true`, grouped by `external_origin`. NOT scaffolded; documentation only.
+7. **Coverage check** — every screen × data fetch, plus unwired buttons.
+8. **Open questions** — product-intent ambiguities only (e.g. "should new accounts be email-verified?"). Environmental gaps (env vars) and wire-up gaps (orphan buttons) belong in `backend-design-next-steps.md` — generated in Phase 2.5.
+
+If the user asks for design edits in Phase 3, edit the underlying state JSON (with `Edit`) and re-run `render-design.mjs`. Do not hand-edit `backend-design.md` — your edits will be overwritten next time the script runs.
 
 **Checkpoint write** (end of Phase 2): merge `{ phase_2_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
@@ -487,6 +512,14 @@ The script re-detects from scratch every run and diffs against the persisted `ga
 
 After it finishes, surface a one-line summary to the user: `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)`.
 
+**Then render the env template** so the user has a copy-pasteable `.env` to fill in:
+
+```bash
+node <SKILL_DIR>/scripts/render-env-example.mjs
+```
+
+This writes `./backend-design.env.example` at the repo root with every env var the design requires (DATABASE_URL, JWT_SECRET, webhook secrets per source, OAuth `<PROVIDER>_CLIENT_ID/SECRET`, email provider options, UPLOADS_DIR, NODE_ENV/PORT). Each var has a one-line comment explaining what it's for and where to get the value. The user can `cp backend-design.env.example .env` and fill in the blanks.
+
 **Checkpoint write** (end of Phase 2.5): merge `{ phase_2_5_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
 ---
@@ -496,10 +529,10 @@ After it finishes, surface a one-line summary to the user: `<N> blocker(s) · <M
 After Phase 2.5 completes:
 
 1. Print a short summary to the user: entity count, table count, endpoint count, whether auth is included, count of UI elements covered vs. flagged in the coverage check, count of open questions, and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
-2. Tell the user: "Review `./backend-design.md` (the design itself) AND `./backend-design-next-steps.md` (what you need to do before this runs). Let me know to proceed, or describe any changes."
+2. Tell the user: "Three files are ready for review: `./backend-design.md` (the design, including a recommended answer to every open question), `./backend-design-next-steps.md` (env vars, wire-up TODOs, accounts to set up), and `./backend-design.env.example` (copy to `.env` and fill in). Let me know to proceed, or describe any changes."
 3. **Stop.** Do not call any more tools. Wait for the user's next message.
 
-If the user asks for design edits, make them directly to `backend-design.md` (use the `Edit` tool — do not spawn an agent for small edits). If the user asks for a substantial redesign, re-spawn the Phase 2 Plan agent with the revised requirements. **Do not hand-edit `backend-design-next-steps.md`** — it's regenerated by `detect-gaps.mjs`. If the user closes a gap (e.g. sets an env var, adds an auth form), re-run `node <SKILL_DIR>/scripts/detect-gaps.mjs` instead.
+If the user asks for design edits, edit the underlying state JSON (e.g. `.backend-design/state/entities.json`) with `Edit`, then **re-run** `node <SKILL_DIR>/scripts/render-design.mjs` to regenerate `backend-design.md`. **Never hand-edit `backend-design.md` directly** — it's overwritten by the renderer. For substantial redesigns, re-spawn the Phase 2 synthesis agent with the revised requirements. **Do not hand-edit `backend-design-next-steps.md`** either — it's regenerated by `detect-gaps.mjs`. If the user closes a gap (e.g. sets an env var, adds an auth form), re-run `node <SKILL_DIR>/scripts/detect-gaps.mjs` instead.
 
 Only proceed to Phase 4 when the user gives explicit approval ("looks good", "proceed", "ship it", "go", etc.). Blockers in `gaps.json` are not hard gates for Phase 4 (codegen can still run with a missing `DATABASE_URL`), but warn the user that the scaffold won't boot until they're resolved.
 
@@ -570,6 +603,6 @@ Then report to the user: stack used, output directory, entity count, endpoint co
 - **Frontend is the source of truth.** Never add endpoints, tables, or fields the UI doesn't imply. If you think the UI is missing something obvious (e.g., login form but no signup form), surface it in the "Open questions" section instead of silently adding it.
 - **Respect the chosen stack.** `.backend-design/config.json` records the user's choice. Do not deviate — if they picked `python-fastapi`, do not generate TypeScript. If `config.json` is missing, tell them to run `npx backend-design start` first.
 - **Don't touch the frontend** unless `stack.framework === "nextjs"`. For the Next.js stack, you may add files under `app/api/`, `lib/`, and `prisma/` in the existing project. For all other stacks, write only to `config.output_dir` (default `./backend`), `./backend-design.md`, and `./.backend-design/`.
-- **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`, not from `backend-design.md`. If the user edits the markdown during review, you must mirror their edits into the JSON files (or have them edit JSON directly) before proceeding to Phase 4.
+- **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`. `backend-design.md` is rendered deterministically from the JSON by `scripts/render-design.mjs` — any hand-edits to it will be overwritten. When the user wants design changes, edit the JSON and re-render.
 - **Run the validator at every synthesis step.** After Phase 1 (4 inventory files) and after Phase 2 (entities/relationships/auth). Never proceed past errors.
 - **One review gate, not many.** Don't pepper the user with `AskUserQuestion` calls during Phase 1 or 2 unless something is genuinely ambiguous about their *intent* for the skill (not about the UI — that goes in Open Questions in the design doc).

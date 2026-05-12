@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { mkdirSync, symlinkSync, unlinkSync, lstatSync, existsSync, readFileSync, writeFileSync, readdirSync } from "fs";
+import { mkdirSync, symlinkSync, unlinkSync, lstatSync, existsSync, readFileSync, writeFileSync, readdirSync, rmSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
@@ -457,6 +457,55 @@ async function start() {
   blank();
 }
 
+async function reset() {
+  banner();
+  const cwd = process.cwd();
+  const stateDir = join(cwd, ".backend-design");
+  const docPath = join(cwd, "backend-design.md");
+  const nextStepsPath = join(cwd, "backend-design-next-steps.md");
+  const envExamplePath = join(cwd, "backend-design.env.example");
+
+  const targets = [];
+  if (existsSync(stateDir)) targets.push({ label: ".backend-design/", path: stateDir, dir: true });
+  if (existsSync(docPath)) targets.push({ label: "backend-design.md", path: docPath, dir: false });
+  if (existsSync(nextStepsPath)) targets.push({ label: "backend-design-next-steps.md", path: nextStepsPath, dir: false });
+  if (existsSync(envExamplePath)) targets.push({ label: "backend-design.env.example", path: envExamplePath, dir: false });
+
+  if (!targets.length) {
+    dim("nothing to reset (no .backend-design/ or generated docs in this directory)");
+    blank();
+    return;
+  }
+
+  step("Reset will delete:");
+  for (const t of targets) dim(`  - ${t.label}`);
+  blank();
+
+  const resp = await prompts(
+    {
+      type: "confirm",
+      name: "confirm",
+      message: "Delete these and start fresh?",
+      initial: false,
+    },
+    { onCancel: () => process.exit(130) }
+  );
+  if (!resp.confirm) {
+    dim("cancelled");
+    blank();
+    return;
+  }
+
+  for (const t of targets) {
+    rmSync(t.path, { recursive: t.dir, force: true });
+    ok(`removed ${t.label}`);
+  }
+  blank();
+  console.log(pc.bold("  Next step"));
+  console.log(`  ${pc.cyan("npx backend-design start")}  ${pc.dim("# re-pick stack and write a fresh config")}`);
+  blank();
+}
+
 async function validate() {
   banner();
   step("Validating .backend-design/state/");
@@ -475,6 +524,15 @@ async function gaps() {
   try {
     const result = mod.runDetect(process.cwd());
     const exitCode = mod.printResults(result);
+    // Refresh the env template too — it derives from the same state and gaps and the user
+    // expects them in sync.
+    try {
+      const envMod = await import("../scripts/render-env-example.mjs");
+      envMod.runRender(process.cwd());
+      ok("refreshed backend-design.env.example");
+    } catch (e) {
+      warn(`could not refresh backend-design.env.example: ${e.message}`);
+    }
     blank();
     process.exit(exitCode);
   } catch (e) {
@@ -501,6 +559,7 @@ function help() {
   console.log(`  ${pc.cyan("validate")}   Check .backend-design/state/*.json invariants`);
   console.log(`  ${pc.cyan("gaps")}       Detect missing env vars, unwired buttons, missing auth UI`);
   console.log(`  ${pc.cyan("status")}     Show phase progress, frontend signature, and open gap counts`);
+  console.log(`  ${pc.cyan("reset")}      Delete .backend-design/ and generated docs to start fresh`);
   blank();
   console.log(pc.bold("  Typical flow"));
   console.log(`  ${pc.dim("$")} npx backend-design install`);
@@ -511,7 +570,7 @@ function help() {
 }
 
 const cmd = process.argv[2];
-const cmds = { install, uninstall, start, validate, gaps, status, help };
+const cmds = { install, uninstall, start, validate, gaps, status, reset, help };
 
 if (!cmd) {
   help();

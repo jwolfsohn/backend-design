@@ -10,6 +10,7 @@ const FILES = [
   "entities.json",
   "relationships.json",
   "auth.json",
+  "open_questions.json",
 ];
 
 const VALID_REL_TYPES = ["one-to-one", "one-to-many", "many-to-one", "many-to-many"];
@@ -246,6 +247,17 @@ export function validate(cwd = process.cwd()) {
     if (!f.evidence?.length) errors.push(`Form ${f.id ?? f.file} has no evidence`);
   }
 
+  const openQuestions = Array.isArray(state.open_questions) ? state.open_questions : null;
+  if (openQuestions) {
+    for (const q of openQuestions) {
+      // Structural fields are required; missing them breaks the renderer.
+      if (!q.question) errors.push(`Open question ${q.id ?? q.title ?? "?"} missing 'question' field`);
+      // Recommendation is content quality — surface as a warning so a single missing rec doesn't
+      // block Phase 3. The synthesis brief still asks for one on every entry.
+      if (!q.recommendation) warnings.push(`Open question ${q.id ?? q.title ?? "?"} missing 'recommendation' field — the design doc renders one alongside each question so the user has a default to accept`);
+    }
+  }
+
   // Note: unwired-button detection (api_call button with no matching endpoint) lives in
   // scripts/detect-gaps.mjs, not here. The validator checks state consistency; gap detection
   // surfaces user-facing wire-up work.
@@ -263,7 +275,21 @@ function findAuthEntityName(entityByName, authSurface) {
   return null;
 }
 
+const IRREGULAR_PLURALS = {
+  person: "people",
+  child: "children",
+  datum: "data",
+  goose: "geese",
+  man: "men",
+  woman: "women",
+  mouse: "mice",
+  foot: "feet",
+  tooth: "teeth",
+  ox: "oxen",
+};
+
 function pluralize(slug) {
+  if (IRREGULAR_PLURALS[slug]) return IRREGULAR_PLURALS[slug];
   if (slug.endsWith("y") && !/[aeiou]y$/.test(slug)) return slug.slice(0, -1) + "ies";
   if (/(s|x|z|ch|sh)$/.test(slug)) return slug + "es";
   return slug + "s";

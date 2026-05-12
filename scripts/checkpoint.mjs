@@ -38,16 +38,28 @@ const IGNORE_DIRS = new Set([
 ]);
 
 export function computeSignature(cwd = process.cwd()) {
+  const configHash = hashConfig(cwd);
   if (existsSync(join(cwd, ".git"))) {
     const head = tryExec("git rev-parse HEAD", cwd);
     if (head) {
-      const diffStat = tryExec("git diff HEAD --stat", cwd) ?? "";
+      // Full diff (not --stat) so content changes with identical line counts are detected.
+      const diff = tryExec("git diff HEAD", cwd) ?? "";
       const untracked = tryExec("git ls-files --others --exclude-standard", cwd) ?? "";
-      const dirtyHash = createHash("sha256").update(diffStat).update("\0").update(untracked).digest("hex").slice(0, 16);
-      return `git:${head.trim().slice(0, 12)}:${dirtyHash}`;
+      const dirtyHash = createHash("sha256").update(diff).update("\0").update(untracked).digest("hex").slice(0, 16);
+      return `git:${head.trim().slice(0, 12)}:${dirtyHash}:${configHash}`;
     }
   }
-  return `fs:${hashFilesystem(cwd)}`;
+  return `fs:${hashFilesystem(cwd)}:${configHash}`;
+}
+
+function hashConfig(cwd) {
+  const path = join(cwd, ".backend-design", "config.json");
+  if (!existsSync(path)) return "noconfig";
+  try {
+    return createHash("sha256").update(readFileSync(path, "utf8")).digest("hex").slice(0, 16);
+  } catch {
+    return "noconfig";
+  }
 }
 
 function tryExec(cmd, cwd) {

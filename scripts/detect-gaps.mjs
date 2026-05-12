@@ -107,15 +107,24 @@ function detectMissingEnvVars(state, config, env) {
     }
   }
 
-  const stripeWebhook = endpoints.some((ep) => ep.is_webhook && (ep.webhook_source ?? "").toLowerCase() === "stripe");
-  if (stripeWebhook && !env.has("STRIPE_WEBHOOK_SECRET")) {
-    gaps.push({
-      type: "missing_env_var",
-      specifier: "STRIPE_WEBHOOK_SECRET",
-      severity: "blocker",
-      what: "STRIPE_WEBHOOK_SECRET is not set in .env",
-      evidence: [".env"],
-    });
+  // Per-source webhook secrets (stripe, github, etc.). Source name is inferred at Phase 1.
+  const webhookSources = new Set();
+  for (const ep of endpoints) {
+    if (!ep.is_webhook) continue;
+    const source = (ep.webhook_source ?? "").toLowerCase().trim();
+    if (source) webhookSources.add(source);
+  }
+  for (const source of webhookSources) {
+    const v = `${source.toUpperCase()}_WEBHOOK_SECRET`;
+    if (!env.has(v)) {
+      gaps.push({
+        type: "missing_env_var",
+        specifier: v,
+        severity: "blocker",
+        what: `${v} is not set in .env`,
+        evidence: [".env"],
+      });
+    }
   }
 
   const stripeOutbound = endpoints.some((ep) => ep.is_external && (ep.external_origin ?? "").toLowerCase().includes("stripe"));
@@ -125,6 +134,37 @@ function detectMissingEnvVars(state, config, env) {
       specifier: "STRIPE_SECRET_KEY",
       severity: "blocker",
       what: "STRIPE_SECRET_KEY is not set in .env",
+      evidence: [".env"],
+    });
+  }
+
+  // Email provider: required by codegen's lib/email.ts stub if password reset or email verification is on.
+  if (auth?.password_reset || auth?.email_verification) {
+    const emailVars = ["SENDGRID_API_KEY", "RESEND_API_KEY", "MAILGUN_API_KEY", "POSTMARK_API_KEY", "SMTP_HOST"];
+    if (!emailVars.some((v) => env.has(v))) {
+      gaps.push({
+        type: "missing_env_var",
+        specifier: "EMAIL_PROVIDER",
+        severity: "blocker",
+        what: "Auth flow requires email delivery but no provider key (SENDGRID/RESEND/MAILGUN/POSTMARK_API_KEY or SMTP_HOST) is set in .env",
+        evidence: [".env"],
+      });
+    }
+  }
+
+  // Multipart endpoints: codegen writes to UPLOADS_DIR. Default works, so warning, not blocker.
+  // Endpoint-level content_type is set in Phase 2, so when this runs standalone after Phase 1
+  // fall back to the form-level multipart flag from forms.json.
+  const forms = state.forms?.forms ?? [];
+  const hasMultipart =
+    endpoints.some((ep) => ep.content_type === "multipart/form-data") ||
+    forms.some((f) => f.multipart === true);
+  if (hasMultipart && !env.has("UPLOADS_DIR")) {
+    gaps.push({
+      type: "missing_env_var",
+      specifier: "UPLOADS_DIR",
+      severity: "warning",
+      what: "Multipart uploads detected but UPLOADS_DIR is not set — codegen will default to ./uploads/",
       evidence: [".env"],
     });
   }
@@ -155,26 +195,33 @@ function detectMissingAuthUi(state) {
   const auth = state.auth;
   const authSurface = state.forms?.auth_surface ?? {};
   const screens = state.screens ?? [];
+  const endpoints = state.endpoints ?? [];
 
-  if (auth) {
-    if (auth.signup && !authSurface.signup?.present) {
-      gaps.push({
-        type: "missing_auth_ui",
-        specifier: "signup",
-        severity: "blocker",
-        what: "Signup endpoint exists in the design but the frontend has no signup form",
-        evidence: ["forms.json"],
-      });
-    }
-    if ((auth.signup || authSurface.signup?.present) && !authSurface.login?.present) {
-      gaps.push({
-        type: "missing_auth_ui",
-        specifier: "login",
-        severity: "blocker",
-        what: "Login endpoint exists in the design but the frontend has no login form",
-        evidence: ["forms.json"],
-      });
-    }
+  // Authoritative signal: either Phase 2's auth.json says signup/login are on, OR
+  // endpoints.json contains the auth endpoints. The endpoint fallback lets `gaps` work
+  // when invoked as a standalone CLI command before Phase 2 has run.
+  const hasSignupEndpoint = endpoints.some((ep) => ep.method === "POST" && /\/auth\/signup$/.test(ep.path ?? ""));
+  const hasLoginEndpoint = endpoints.some((ep) => ep.method === "POST" && /\/auth\/login$/.test(ep.path ?? ""));
+  const wantsSignup = auth?.signup || hasSignupEndpoint;
+  const wantsLogin = auth?.signup || hasLoginEndpoint || authSurface.signup?.present;
+
+  if (wantsSignup && !authSurface.signup?.present) {
+    gaps.push({
+      type: "missing_auth_ui",
+      specifier: "signup",
+      severity: "blocker",
+      what: "Signup endpoint exists in the design but the frontend has no signup form",
+      evidence: ["forms.json"],
+    });
+  }
+  if (wantsLogin && !authSurface.login?.present) {
+    gaps.push({
+      type: "missing_auth_ui",
+      specifier: "login",
+      severity: "blocker",
+      what: "Login endpoint exists in the design but the frontend has no login form",
+      evidence: ["forms.json"],
+    });
   }
 
   const noAuthSurface = !authSurface.signup?.present && !authSurface.login?.present;
