@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+.backend-design/
+backend/
+backend-design.md
