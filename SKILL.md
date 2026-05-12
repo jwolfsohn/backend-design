@@ -29,6 +29,44 @@ A validator at `<SKILL_DIR>/validate.mjs` checks the state for invariants (FK ta
 
 ---
 
+## Phase 0 — Resumption check
+
+Run **before** the pre-flight check. Decides whether to start fresh or skip ahead based on what was last completed.
+
+1. **Read `.backend-design/checkpoint.json`** with the `Read` tool. If missing → fresh run; proceed to Pre-flight.
+2. **Run the decision script:**
+   ```bash
+   node <SKILL_DIR>/scripts/checkpoint.mjs decide
+   ```
+   It prints one line of JSON: `{"action": "...", "reason": "...", "next_phase": ...}`. The script computes the current frontend signature (git HEAD + dirty hash if the repo is git-managed, otherwise a content hash over the source tree) and compares it to `checkpoint.frontend_signature`.
+3. **Branch on `action`:**
+
+   | `action` | What to do |
+   |---|---|
+   | `fresh` | No prior state. Proceed to Pre-flight → Phase 1. |
+   | `resume_phase_2` | Phase 1 inventory is on disk and frontend unchanged. Skip Phase 1; proceed to Phase 2. |
+   | `resume_phase_2_5` | Phase 2 synthesis on disk. Skip Phases 1+2; render `backend-design.md` from existing state, then proceed to Phase 2.5. |
+   | `resume_phase_3` | Design and next-steps docs exist. Skip everything except the Phase 3 review gate — print the summary and wait for approval. |
+   | `resume_phase_4` | Design approved but scaffold not generated. Skip to Phase 4 directly. |
+   | `gaps_only` | Scaffold complete, frontend unchanged. Run only Phase 2.5 (`detect-gaps.mjs`) to surface any newly closed/opened items. Report and stop — do not re-scaffold. |
+   | `fresh_with_gaps_preserved` | Frontend changed since the last run. Re-run from Phase 1. **Preserve** `.backend-design/gaps.json` so closure detection still works on this run. |
+
+4. **Tell the user one line of context** (echo the `reason` field): `Resuming at Phase 4 — design approved, scaffold not yet generated.` etc.
+
+After each subsequent phase succeeds, **update the checkpoint** via `Read` + `Write` on `.backend-design/checkpoint.json` (merge fields; never overwrite the whole file blindly):
+
+| Phase | Fields to add |
+|---|---|
+| 1 | `phase_1_at: <ISO-8601 now>`, `frontend_signature: <output of `node <SKILL_DIR>/scripts/checkpoint.mjs signature`>` |
+| 2 | `phase_2_at: <now>` |
+| 2.5 | `phase_2_5_at: <now>` |
+| 3 (user approves) | `design_approved_at: <now>` |
+| 4 (verification passes) | `phase_4_at: <now>` |
+
+The signature is captured **once at end of Phase 1** — not re-captured on later phases, because we want to detect "did the frontend change between this run and the last one," not "did the frontend change since the most recent phase."
+
+---
+
 ## Pre-flight check
 
 Before Phase 1:
@@ -264,6 +302,8 @@ node <SKILL_DIR>/validate.mjs
 
 It will fail if any of the four files are missing or unparseable, and report Phase-1 cross-file issues (endpoints without UI triggers, components referenced by screens but missing from `components.json`, etc.). Fix gaps by re-spawning the relevant agent with a tighter brief — do not paper over gaps in the synthesis step. Apply the same three-iteration cap as Phase 2.
 
+**Checkpoint write** (end of Phase 1): merge `{ phase_1_at: <ISO now>, frontend_signature: <run `node <SKILL_DIR>/scripts/checkpoint.mjs signature`> }` into `.backend-design/checkpoint.json`.
+
 ---
 
 ### Phase 2 — Design synthesis
@@ -379,6 +419,24 @@ Give it this brief:
 >
 > **Do not invent features the UI does not imply.** Do not add admin endpoints unless an admin page exists in `screens.json`. Be skeptical of speculative endpoints.
 >
+> **Placeholder endpoints (vibe-coder mode only).** If `config.json -> vibe_coder === true`, scan `forms.standalone_buttons[]` for entries with `action: "api_call"` whose target either is missing or doesn't appear in `endpoints.json`. For each such button, add a **placeholder endpoint** to `endpoints.json` with:
+>
+> ```json
+> {
+>   "method": "POST",
+>   "path": "/api/<best-guess-from-label>",
+>   "request_body": {},
+>   "response": null,
+>   "triggered_by": ["<button file:line>"],
+>   "auth": "required",
+>   "temporary": true,
+>   "placeholder_reason": "Scaffolded for orphan button '<label>' at <button file:line>. Path is a best-guess; user must replace or wire up the real endpoint.",
+>   "evidence": ["<button file:line>"]
+> }
+> ```
+>
+> Infer method from the button label: "Delete/Remove/Cancel" → `DELETE`; "Edit/Update/Save" → `PATCH`; everything else → `POST`. Infer auth: if any screen containing the button has `auth_required: true`, set `auth: "required"`; otherwise `auth: "none"`. Infer path from a slugified version of the label scoped under the screen's URL when possible (e.g. button "Become a host" → `/api/hosts/apply`). When in doubt, prefix with `/api/` and slugify the label. **Set `temporary: true` and `placeholder_reason` on every such endpoint** — these fields signal codegen to scaffold a 501 stub rather than a real handler. Do not invent request body fields; leave `request_body: {}`. Do not infer indices or relations from a placeholder. If `vibe_coder` is false or unset, **never** generate placeholder endpoints — flag orphan buttons as gaps in Phase 2.5 instead.
+>
 > **Skip external endpoints.** Endpoints with `is_external: true` are calls to third-party services (Stripe, OpenAI, etc.). Do not refine them, do not derive implied CRUD around them, and do not assign them an `auth` field. Carry them through unchanged so the design doc can list them under "External integrations".
 >
 > Write all four artifacts. Do not produce markdown — only JSON.
@@ -402,21 +460,50 @@ Once validation passes, render `backend-design.md` at repo root from the JSON. Y
 5. **Auth model** — rendered from `auth.json`.
 6. **External integrations** — list of endpoints with `is_external: true`, grouped by `external_origin`. These are NOT in the generated backend; they document third-party services the frontend depends on.
 7. **Coverage check** — table mapping every screen + every interactive element to the backend artifact that supports it. Flag unmapped UI as Open Questions.
-8. **Open questions** — anything ambiguous, plus all validator warnings.
+8. **Open questions** — product-intent ambiguities only (e.g. "should followers be private by default?", "should the cart merge with server cart on login?"). **Environmental gaps (missing env vars, accounts) and wire-up gaps (orphan buttons, missing auth UI) belong in `backend-design-next-steps.md` — they're generated in Phase 2.5 below, not here.**
+
+**Checkpoint write** (end of Phase 2): merge `{ phase_2_at: <ISO now> }` into `.backend-design/checkpoint.json`.
+
+---
+
+### Phase 2.5 — Gap detection & next-steps render
+
+After `backend-design.md` is rendered and before the review gate, run the deterministic gap detector:
+
+```bash
+node <SKILL_DIR>/scripts/detect-gaps.mjs
+```
+
+It reads the state JSON, `config.json`, `./.env`, and `./package.json`; writes `.backend-design/gaps.json` and `./backend-design-next-steps.md`. No agent needed — it's a plain script, same shape as `validate.mjs`.
+
+What it catches:
+
+- **`missing_env_var`** — env vars required by the chosen stack/auth that aren't in `.env` (e.g. `DATABASE_URL` for Postgres stacks, `JWT_SECRET` when auth is JWT, `STRIPE_WEBHOOK_SECRET` for Stripe webhooks, `<PROVIDER>_CLIENT_ID` / `_SECRET` per OAuth provider).
+- **`missing_auth_ui`** — `auth.json` has signup/login but `forms.auth_surface` shows the frontend has no signup/login form. Also: screens marked `auth_required: true` while no auth surface exists.
+- **`unwired_button`** — `forms.standalone_buttons[]` entries with `action: "api_call"` whose target doesn't match any endpoint. The script does not invent a path — it surfaces the button as a decision the user must make.
+- **`external_account_unconfirmed`** — Supabase / Stripe / OpenAI references detected via `package.json` deps or `is_external` endpoint origins. Informational only.
+
+The script re-detects from scratch every run and diffs against the persisted `gaps.json` using `(type, evidence_file, specifier)` as the natural key. Gaps the user has closed since the last run show up under "Recently closed" in the next-steps doc.
+
+After it finishes, surface a one-line summary to the user: `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)`.
+
+**Checkpoint write** (end of Phase 2.5): merge `{ phase_2_5_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
 ---
 
 ### Phase 3 — Review gate (do not skip)
 
-After Phase 2 completes:
+After Phase 2.5 completes:
 
-1. Print a short summary of `backend-design.md` to the user: entity count, table count, endpoint count, whether auth is included, count of UI elements covered vs. flagged in the coverage check, and the count of open questions.
-2. Tell the user: "The design doc is at `./backend-design.md`. Review it and let me know to proceed, or describe any changes."
+1. Print a short summary to the user: entity count, table count, endpoint count, whether auth is included, count of UI elements covered vs. flagged in the coverage check, count of open questions, and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
+2. Tell the user: "Review `./backend-design.md` (the design itself) AND `./backend-design-next-steps.md` (what you need to do before this runs). Let me know to proceed, or describe any changes."
 3. **Stop.** Do not call any more tools. Wait for the user's next message.
 
-If the user asks for edits, make them directly to `backend-design.md` (use the `Edit` tool — do not spawn an agent for small edits). If the user asks for a substantial redesign, re-spawn the Phase 2 Plan agent with the revised requirements.
+If the user asks for design edits, make them directly to `backend-design.md` (use the `Edit` tool — do not spawn an agent for small edits). If the user asks for a substantial redesign, re-spawn the Phase 2 Plan agent with the revised requirements. **Do not hand-edit `backend-design-next-steps.md`** — it's regenerated by `detect-gaps.mjs`. If the user closes a gap (e.g. sets an env var, adds an auth form), re-run `node <SKILL_DIR>/scripts/detect-gaps.mjs` instead.
 
-Only proceed to Phase 4 when the user gives explicit approval ("looks good", "proceed", "ship it", "go", etc.).
+Only proceed to Phase 4 when the user gives explicit approval ("looks good", "proceed", "ship it", "go", etc.). Blockers in `gaps.json` are not hard gates for Phase 4 (codegen can still run with a missing `DATABASE_URL`), but warn the user that the scaffold won't boot until they're resolved.
+
+**Checkpoint write** (on user approval): merge `{ design_approved_at: <ISO now> }` into `.backend-design/checkpoint.json` before starting Phase 4.
 
 ---
 
@@ -432,11 +519,13 @@ The codegen prompt is **stack-specific**. Read `.backend-design/config.json` to 
 | `nextjs-prisma`       | `<SKILL_DIR>/prompts/codegen-nextjs-prisma.md` |
 | `python-fastapi`      | `<SKILL_DIR>/prompts/codegen-python-fastapi.md` |
 
-Use `Read` to load the relevant prompt file. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass that file's contents as the prompt, prefixed with:
+Use `Read` to load the relevant prompt file. **If any endpoint in `endpoints.json` has `temporary: true`**, also `Read` `<SKILL_DIR>/prompts/codegen-placeholders.md` and concatenate it ahead of the stack-specific prompt. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass the assembled prompt:
 
 > The authoritative spec is in `.backend-design/state/*.json`. The user has chosen stack `<config.stack.id>` (<config.stack.label>) with auth strategy `<config.auth.strategy>` and output directory `<config.output_dir>`.
 >
 > Use this brief:
+>
+> <pasted contents of codegen-placeholders.md, only if any endpoint has temporary: true>
 >
 > <pasted contents of the codegen-*.md file>
 
@@ -468,6 +557,8 @@ If a verification step fails, classify before fixing:
 - If both budgets are exhausted, stop and report the remaining failures to the user rather than declaring success.
 
 Do not declare the task complete until verification passes.
+
+**Checkpoint write** (end of Phase 4): merge `{ phase_4_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
 Then report to the user: stack used, output directory, entity count, endpoint count, and the next-step command from the codegen prompt's "README run commands" section.
 

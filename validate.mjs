@@ -246,18 +246,9 @@ export function validate(cwd = process.cwd()) {
     if (!f.evidence?.length) errors.push(`Form ${f.id ?? f.file} has no evidence`);
   }
 
-  for (const btn of standaloneButtons) {
-    if (btn.action === "api_call" && btn.target) {
-      const [method, ...rest] = btn.target.split(" ");
-      const path = rest.join(" ");
-      if (method && path) {
-        const key = `${method.toUpperCase()} ${path}`;
-        if (!endpointKeys.has(key)) {
-          warnings.push(`Button at ${btn.file} targets '${btn.target}' but no matching endpoint is defined`);
-        }
-      }
-    }
-  }
+  // Note: unwired-button detection (api_call button with no matching endpoint) lives in
+  // scripts/detect-gaps.mjs, not here. The validator checks state consistency; gap detection
+  // surfaces user-facing wire-up work.
 
   return { errors, warnings, state };
 }

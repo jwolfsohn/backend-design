@@ -43,6 +43,7 @@ backend/
 - Use Fastify's `schema` option on each route with JSON Schemas derived from zod schemas (via `zod-to-json-schema`). This gives you free validation AND OpenAPI compatibility.
 - On validation failure Fastify auto-returns 400 with the error payload
 - **Multipart endpoints**: register `@fastify/multipart`. Use `request.file()` or `request.files()` per the route's spec. Enforce `accept` (MIME) and `max_size_mb` (`limits.fileSize`). Same `lib/storage.ts` stub as the Express stack.
+- **Placeholder endpoints** (any endpoint where `temporary: true`): scaffold per the rules in the "Placeholder endpoint scaffolding" section prepended above. Do NOT add Fastify schema validation, auth preHandlers, or Prisma calls on placeholder routes.
 - **Webhook endpoints** (`is_webhook: true`): register `fastify.addContentTypeParser('application/json', { parseAs: 'buffer' }, ...)` for these routes so the raw body is preserved. Read `signature_header`, verify against `process.env.<WEBHOOK_SOURCE>_WEBHOOK_SECRET`, return 401 on invalid / 200 on valid. Add the env var to `.env.example`.
 - `preHandler: [fastify.authenticate]` on routes where `endpoints[].auth === "required"`. The `authenticate` decorator wraps `request.jwtVerify()` and attaches `request.user`.
 - **RBAC**: for routes with `required_role`, add a second preHandler `requireRole(role)` factory in `plugins/auth.ts` that runs after `authenticate` and returns 403 if `request.user.role` doesn't match. User entity must include `role: text`.

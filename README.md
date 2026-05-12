@@ -27,8 +27,11 @@ Each framework has dedicated search patterns in `prompts/frontend-patterns.md` s
 1. **Inventories** every screen, component, network call, form, button, and auth surface — in parallel, writing structured JSON state.
 2. **Synthesizes** entities, relationships, endpoints, and an auth model from the inventory.
 3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
-4. **Reviews** — produces a human-readable `backend-design.md` and pauses for your approval.
-5. **Scaffolds** a runnable backend in your chosen stack once you approve.
+4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions.
+5. **Reviews** — produces a human-readable `backend-design.md` and pauses for your approval.
+6. **Scaffolds** a runnable backend in your chosen stack once you approve.
+
+On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
 
 ## Supported stacks
 
@@ -43,6 +46,10 @@ You pick one when you run `npx backend-design start`:
 | **Python + FastAPI + SQLAlchemy + Postgres** | Strong typing, async by default. SQLAlchemy 2 + alembic. |
 
 Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions are not yet implemented in any of the codegen prompts — pick JWT or scaffold sessions yourself afterwards.)
+
+### Vibe-coder mode (opt-in)
+
+`npx backend-design start` asks whether to scaffold placeholder endpoints for orphan UI signals (e.g. a "Become a host" button with no handler). When **on**, Phase 2 emits stub endpoints with `temporary: true` and codegen wraps them in 501 handlers that throw loudly in dev. Paths are best-guesses — the next-steps doc flags each one for review. Default is **off** (strict mode: orphan buttons go in next-steps as wire-up work, no endpoints invented).
 
 ## Platform support
 
@@ -89,8 +96,10 @@ The skill walks through inventory, synthesis, validation, review, and code gener
 |---------|--------------|
 | `npx backend-design install` | Symlink the skill into `~/.claude/skills/` |
 | `npx backend-design uninstall` | Remove the symlink |
-| `npx backend-design start` | Interactive: pick stack + auth, write `.backend-design/config.json` |
+| `npx backend-design start` | Interactive: pick stack + auth + vibe-coder mode, write `.backend-design/config.json` |
 | `npx backend-design validate` | Validate `.backend-design/state/*.json` against invariants |
+| `npx backend-design gaps` | Re-detect missing env vars, unwired buttons, missing auth UI; rewrite `backend-design-next-steps.md` |
+| `npx backend-design status` | Show phase progress, frontend signature, and open gap counts |
 | `npx backend-design help` | Show usage |
 
 ## State files
@@ -99,14 +108,16 @@ All design state lives under `.backend-design/`:
 
 | File | Written by | Contents |
 |------|------------|----------|
-| `config.json` | `start` command | Chosen stack, auth strategy, output dir |
+| `config.json` | `start` command | Chosen stack, auth strategy, vibe-coder mode, output dir |
 | `state/screens.json` | Phase 1 Agent 1 (sonnet) | Every screen, entities displayed, data fetches, nav graph |
 | `state/components.json` | Phase 1 Agent 2 (sonnet) | Every component, props, hooks, shared state |
-| `state/endpoints.json` | Phase 1 Agent 3 (sonnet) + Phase 2 refine | Every API call + implied CRUD |
+| `state/endpoints.json` | Phase 1 Agent 3 (sonnet) + Phase 2 refine | Every API call + implied CRUD (+ placeholders in vibe-coder mode) |
 | `state/forms.json` | Phase 1 Agent 4 (sonnet) | Every form, button, auth surface |
 | `state/entities.json` | Phase 2 Plan agent | Inferred Postgres tables with columns/indexes |
 | `state/relationships.json` | Phase 2 Plan agent | FK relationships with cardinalities |
 | `state/auth.json` | Phase 2 Plan agent | JWT/bcrypt config, signup/login/etc. flags |
+| `gaps.json` | Phase 2.5 (`detect-gaps.mjs`) | Open and closed gaps with severity, fix instructions, evidence |
+| `checkpoint.json` | End of each phase | Phase timestamps + frontend signature for Phase 0 resumption |
 
 Every JSON entry includes `evidence: ["file:line"]` so you can trace any decision back to the UI.
 
@@ -148,13 +159,18 @@ Expect a few dollars per end-to-end run on a typical app, more on large or convo
 
 `SKILL.md` is a runbook for Claude Code, not executable code. When the skill activates:
 
-1. Reads `.backend-design/config.json` to know which stack to target.
-2. Runs a pre-flight check (frontend detected, file count under threshold).
-3. Spawns four `general-purpose` subagents (Sonnet) in parallel for the frontend inventory. Each writes one JSON file. (`Explore` is read-only, so it can't be used here.)
-4. Spawns one `general-purpose` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`.
-5. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
-6. Renders `backend-design.md` from the JSON and pauses for your approval.
-7. Reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md`, then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend. Verifies the scaffold compiles before reporting done.
+1. **Phase 0** — runs `scripts/checkpoint.mjs decide`. If a prior run is on disk and the frontend hasn't changed, skips ahead to whichever phase still needs work.
+2. Reads `.backend-design/config.json` to know which stack to target.
+3. Runs a pre-flight check (frontend detected, file count under threshold).
+4. **Phase 1** — spawns four `general-purpose` subagents (Sonnet) in parallel for the frontend inventory. Each writes one JSON file. (`Explore` is read-only, so it can't be used here.)
+5. **Phase 2** — spawns one `general-purpose` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`. In vibe-coder mode, also emits placeholder endpoints for orphan UI signals.
+6. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
+7. Renders `backend-design.md` from the JSON.
+8. **Phase 2.5** — runs `scripts/detect-gaps.mjs` to produce `backend-design-next-steps.md` (env-var checklist, wire-up TODOs, placeholder review).
+9. **Phase 3** — pauses for your approval on both docs.
+10. **Phase 4** — reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md` (prepended with `codegen-placeholders.md` if any placeholders exist), then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend. Verifies the scaffold compiles before reporting done.
+
+Each phase writes a timestamp into `checkpoint.json` so the next invocation can resume cleanly.
 
 No custom subagent definitions, no plugins — just the built-in Claude Code agents with model pinning and stack-specific prompts.
 

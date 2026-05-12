@@ -382,6 +382,23 @@ async function start() {
   if (!authResp.auth) process.exit(130);
   blank();
 
+  step("Vibe-coder mode");
+  const vibeResp = await prompts(
+    {
+      type: "select",
+      name: "vibe_coder",
+      message: "scaffold placeholder endpoints for orphan UI?",
+      choices: [
+        { title: "off (strict, recommended)", description: "Only generate endpoints the UI clearly implies. Orphan buttons go in next-steps as 'wire-up' work.", value: false },
+        { title: "on (vibe-coder)", description: "Also scaffold 501 stubs for orphan buttons (e.g. 'Become a host'). Paths are best-guesses — review next-steps doc carefully.", value: true },
+      ],
+      initial: 0,
+    },
+    { onCancel: () => process.exit(130) }
+  );
+  if (vibeResp.vibe_coder === undefined) process.exit(130);
+  blank();
+
   let defaultOut = stack.framework === "nextjs" ? "." : "./backend";
   step("Output directory");
   const dirResp = await prompts(
@@ -413,6 +430,7 @@ async function start() {
       database: stack.database,
     },
     auth: { strategy: authResp.auth },
+    vibe_coder: vibeResp.vibe_coder,
     output_dir: dirResp.out,
     pkg_manager: pkgManager,
     frontend: front,
@@ -429,6 +447,7 @@ async function start() {
   console.log(pc.bold("  Summary"));
   console.log(`  ${pc.dim("stack:")}     ${stack.label}`);
   console.log(`  ${pc.dim("auth:")}      ${authResp.auth}`);
+  console.log(`  ${pc.dim("vibe:")}      ${vibeResp.vibe_coder ? "on" : "off"}`);
   console.log(`  ${pc.dim("output:")}    ${dirResp.out}`);
   console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
   blank();
@@ -448,6 +467,31 @@ async function validate() {
   process.exit(exitCode);
 }
 
+async function gaps() {
+  banner();
+  step("Detecting gaps");
+  const mod = await import("../scripts/detect-gaps.mjs");
+  blank();
+  try {
+    const result = mod.runDetect(process.cwd());
+    const exitCode = mod.printResults(result);
+    blank();
+    process.exit(exitCode);
+  } catch (e) {
+    fail(e.message);
+    blank();
+    process.exit(1);
+  }
+}
+
+async function status() {
+  banner();
+  const mod = await import("../scripts/checkpoint.mjs");
+  const exitCode = mod.printStatus(process.cwd());
+  blank();
+  process.exit(exitCode);
+}
+
 function help() {
   banner();
   console.log(pc.bold("  Commands"));
@@ -455,6 +499,8 @@ function help() {
   console.log(`  ${pc.cyan("uninstall")}  Remove the symlink`);
   console.log(`  ${pc.cyan("start")}      Pick a stack and write .backend-design/config.json`);
   console.log(`  ${pc.cyan("validate")}   Check .backend-design/state/*.json invariants`);
+  console.log(`  ${pc.cyan("gaps")}       Detect missing env vars, unwired buttons, missing auth UI`);
+  console.log(`  ${pc.cyan("status")}     Show phase progress, frontend signature, and open gap counts`);
   blank();
   console.log(pc.bold("  Typical flow"));
   console.log(`  ${pc.dim("$")} npx backend-design install`);
@@ -465,7 +511,7 @@ function help() {
 }
 
 const cmd = process.argv[2];
-const cmds = { install, uninstall, start, validate, help };
+const cmds = { install, uninstall, start, validate, gaps, status, help };
 
 if (!cmd) {
   help();

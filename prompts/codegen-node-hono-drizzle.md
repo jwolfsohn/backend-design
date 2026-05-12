@@ -52,6 +52,7 @@ backend/
 - Routes: one Hono sub-app per resource, mounted via `app.route('/posts', postsRoute)`
 - Use `zValidator('json', schema)` middleware on every route with a body
 - **Multipart endpoints**: use `await c.req.parseBody()` (Hono handles multipart natively). Validate MIME / size manually against the spec's `accept` / `max_size_mb`. Same `lib/storage.ts` stub pattern.
+- **Placeholder endpoints** (any endpoint where `temporary: true`): scaffold per the rules in the "Placeholder endpoint scaffolding" section prepended above. Do NOT use `zValidator`, attach the auth middleware, or call Drizzle on placeholder routes.
 - **Webhook endpoints** (`is_webhook: true`): do NOT use `zValidator('json')` — use `await c.req.text()` (or `arrayBuffer()`) to get the raw body for signature verification. Read `signature_header` via `c.req.header(...)`, verify against `process.env.<WEBHOOK_SOURCE>_WEBHOOK_SECRET`, return 401/200. Add the env var to `.env.example`.
 - Auth middleware sets `c.set('user', payload)`; protected routes check `c.get('user')`
 - **RBAC**: for routes with `required_role`, add a `requireRole(role)` middleware that runs after the auth middleware and returns `c.json({ error: 'forbidden' }, 403)` on mismatch. User table must include a `role: text` column.
