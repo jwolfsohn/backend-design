@@ -18,7 +18,9 @@
     "node": ">=20"
   },
   "scripts": {
-    "test:validate": "node validate.mjs"
+    "test:validate": "node validate.mjs",
+    "check:bin": "node -e \"const p=require('./package.json');const bad=Object.entries(p.bin||{}).filter(([,v])=>v.startsWith('./'));if(bad.length){console.error('bin paths must not start with ./ — npm strips them silently:',bad);process.exit(1);}console.log('bin paths OK')\"",
+    "prepublishOnly": "npm pkg fix && npm run check:bin"
   },
   "dependencies": {
     "picocolors": "^1.1.1",
