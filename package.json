@@ -1,0 +1,43 @@
+{
+  "name": "backend-design",
+  "version": "0.1.0",
+  "description": "Claude Code skill that analyzes a React/Next.js frontend and scaffolds a matching Node.js + Express + Postgres backend.",
+  "type": "module",
+  "bin": {
+    "backend-design": "./bin/backend-design.mjs"
+  },
+  "files": [
+    "SKILL.md",
+    "validate.mjs",
+    "bin/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test:validate": "node validate.mjs"
+  },
+  "keywords": [
+    "claude-code",
+    "claude",
+    "skill",
+    "backend",
+    "scaffold",
+    "react",
+    "nextjs",
+    "express",
+    "prisma",
+    "postgres"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jwolfsohn/backend-design.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jwolfsohn/backend-design/issues"
+  },
+  "homepage": "https://github.com/jwolfsohn/backend-design#readme"
+}

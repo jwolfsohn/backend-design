@@ -22,7 +22,30 @@ Do not deviate from this stack unless the user explicitly asks.
 
 You will execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
 
-Before Phase 1, do a 30-second sanity check: confirm there is actually a React or Next.js frontend in the current directory (`package.json` with `react` or `next` as a dep, or an `app/`/`pages/` directory). If you don't see one, stop and ask the user where the frontend lives.
+All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and Phase-2 Plan agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them; the codegen agent in Phase 4 reads them directly.
+
+A validator script at `~/.claude/skills/backend-design/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix any errors before continuing.
+
+---
+
+## Pre-flight check
+
+Before Phase 1:
+
+1. **Frontend present?** Confirm `package.json` lists `react` or `next` as a dep, or there's an `app/` / `pages/` / `src/app/` / `src/pages/` directory. If not, stop and ask the user where the frontend lives.
+
+2. **Codebase size.** Run:
+   ```bash
+   find . -type f \( -name "*.tsx" -o -name "*.jsx" -o -name "*.ts" -o -name "*.js" \) \
+     -not -path "*/node_modules/*" -not -path "*/.next/*" \
+     -not -path "*/dist/*" -not -path "*/build/*" -not -path "*/.git/*" | wc -l
+   ```
+   If the count is **over 500**, warn the user: "This frontend has N source files; a full run will cost roughly \$5–15 in API tokens and ~10 minutes. Want me to scope down to a subdirectory (e.g. only `app/`)?" Wait for an answer before proceeding. Over 1500 files, refuse unless the user scopes down — the result will be noisy.
+
+3. **Create the state directory:**
+   ```bash
+   mkdir -p .backend-design/state
+   ```
 
 ---
 
@@ -30,129 +53,267 @@ Before Phase 1, do a 30-second sanity check: confirm there is actually a React o
 
 Goal: catalog **every screen, every component, every interactive element, and every relationship between them** — enough that someone could rebuild the UI from the inventory alone. Be exhaustive, not selective. Partial coverage here corrupts every later phase.
 
-Spawn **four `Explore` subagents in parallel** (single message, four tool calls). Use the prompts below verbatim, fill in the working directory. Tell every agent breadth `very thorough`.
+Spawn **four `Explore` subagents in parallel** (single message, four tool calls). Each writes a single JSON file. Pin the model per agent to control cost — Agents 3 and 4 are mechanical and can run on Haiku.
 
-**Agent 1 — Screens & navigation** (breadth: very thorough)
+| Agent | Model | Output file | Breadth |
+|-------|-------|-------------|---------|
+| 1. Screens & navigation | `sonnet` | `.backend-design/state/screens.json` | very thorough |
+| 2. Component tree & shared state | `sonnet` | `.backend-design/state/components.json` | very thorough |
+| 3. Network calls & API contracts | `haiku` | `.backend-design/state/endpoints.json` | very thorough |
+| 4. Forms, buttons, auth surface | `haiku` | `.backend-design/state/forms.json` | very thorough |
 
-> Walk every screen in this React/Next.js frontend. A screen = anything the user can navigate to or that takes over the viewport: a route, a modal, a drawer, a wizard step, a tab panel that swaps content, an empty state, an error state, a loading state. Do not skip "obvious" screens (404, sign-in, settings sub-pages). For each screen return:
->
-> - **URL path** — or the trigger if not URL-based (e.g. "modal opened from PostCard.tsx:42 'Share' button")
-> - **File path** of the top-level component
-> - **Direct child components used** (one level deep)
-> - **Entities displayed** — the kinds of data shown (e.g. "list of posts with author name and comment count", "single user profile with their orders")
-> - **Data fetches** — every `getServerSideProps`, `getStaticProps`, `loader`, server component fetch, `useEffect`+fetch, `useSWR`, `useQuery`. Capture URL, method, and where each response is consumed.
-> - **Outbound navigation** — every `<Link>`, `router.push`, `redirect()`, `<a href=`, button-that-navigates. Capture destination route.
-> - **Auth gate** — does the screen require login? Look for middleware redirects, `<RequireAuth>` wrappers, `getServerSideProps` auth checks, `auth()` calls.
->
-> Search `app/`, `pages/`, `src/pages/`, `src/app/`, and any `react-router` / `tanstack-router` configs. Inventory layout files (`layout.tsx`, `_app.tsx`, `_layout.tsx`) and what they wrap.
->
-> Return markdown with one `##` section per screen, plus a final `## Navigation graph` section listing every screen → screen edge with the trigger (button label, link text).
+Pass the `model` parameter to the `Agent` tool when spawning each agent (e.g. `Agent({ subagent_type: "Explore", model: "haiku", prompt: "..." })`).
 
-**Agent 2 — Component tree & shared state** (breadth: very thorough)
+Each agent **writes exactly one JSON file**. Do not let them output markdown — only the JSON. If an agent writes markdown by mistake, re-spawn it with the schema reminder.
 
-> Map the full component composition for this React/Next.js frontend. For every component file under `src/`, `components/`, `app/`, `pages/`, `ui/`, return:
->
-> - **File path**
-> - **Component name(s) exported**
-> - **Props interface** — every prop name, type (from TS), required/optional. If untyped, infer from usage.
-> - **Components it renders** — child components in JSX, with the props it passes them. This is the composition edge.
-> - **Hooks it uses** — including custom hooks. Note `useContext`, `useStore`, `useSelector`, `useAtom`, `useQuery`, `useMutation`.
-> - **Data it reads or mutates** — what entities/fields does this component touch, even just for display?
->
-> Then separately catalog **shared state**:
-> - Every React `Context` provider (file, value shape, consumers)
-> - Every Zustand / Redux / Jotai / Recoil / MobX store (file, state shape, mutators)
-> - Every `localStorage` / `sessionStorage` / cookie key the app reads or writes (search `localStorage.`, `sessionStorage.`, `document.cookie`, `cookies()` from `next/headers`)
->
-> Return markdown. Include a final `## Component composition tree` section as a nested list rooted at each top-level screen, going all the way to leaf components. Do not stop at depth 2.
+**Agent 1 — Screens & navigation** → writes `.backend-design/state/screens.json`
 
-**Agent 3 — Network calls & API contracts** (breadth: very thorough)
+> Walk every screen in this React/Next.js frontend. A screen = anything the user can navigate to or that takes over the viewport: a route, a modal, a drawer, a wizard step, a tab panel that swaps content, an empty state, an error state, a loading state. Do not skip "obvious" screens (404, sign-in, settings sub-pages). Search `app/`, `pages/`, `src/pages/`, `src/app/`, `react-router` / `tanstack-router` configs, and layout files (`layout.tsx`, `_app.tsx`, `_layout.tsx`).
+>
+> Write a JSON array to `.backend-design/state/screens.json` where each element is:
+>
+> ```json
+> {
+>   "id": "post-detail",
+>   "path": "/posts/[id]",
+>   "trigger": null,
+>   "file": "app/posts/[id]/page.tsx",
+>   "entities_displayed": ["Post", "Comment", "User"],
+>   "children": ["PostBody", "CommentList", "CommentForm"],
+>   "data_fetches": [
+>     {"method": "GET", "url": "/api/posts/[id]", "consumed_at": "app/posts/[id]/page.tsx:12"},
+>     {"method": "GET", "url": "/api/posts/[id]/comments", "consumed_at": "app/posts/[id]/page.tsx:18"}
+>   ],
+>   "nav_out": [
+>     {"to": "/users/[id]", "trigger_label": "author avatar"},
+>     {"to": "/posts/[id]/edit", "trigger_label": "Edit"}
+>   ],
+>   "auth_required": false,
+>   "evidence": ["app/posts/[id]/page.tsx:1"]
+> }
+> ```
+>
+> For non-URL screens (modals, wizard steps): set `path` to `null` and fill `trigger` with the file:line and label of what opens it. Always include `evidence`. Do not output any markdown — only write the JSON file. Be exhaustive.
 
-> Find every outbound HTTP call in this React/Next.js frontend. Search for: `fetch(`, `axios.`, `ky.`, `useSWR`, `useQuery`, `useMutation`, `<form action=`, `<Form action=`, server actions (`"use server"`), and any existing `app/api/*` or `pages/api/*` handlers. For each call return:
->
-> - **file:line**
-> - **HTTP method**
-> - **URL or URL pattern** (resolve template literals and path params where you can)
-> - **Request body shape** (from TS interfaces, zod schemas, or inferred from the object literal passed in)
-> - **Query params**
-> - **Response shape** consumed by the caller (from TS types or destructuring)
-> - **Trigger** — button click (which button, file:line), page load, form submit, polling interval
-> - **Consuming component** — where the response data ends up rendered
-> - **Auth header pattern** — does the call attach a token? From where (cookie, header, context)?
->
-> Also list every existing Next.js API route handler (`app/api/*/route.ts`, `pages/api/*.ts`) with its current implementation summary — those are endpoints to preserve or migrate, not duplicate.
->
-> Return a markdown table with the columns above, followed by a `## Auth header summary` section.
+**Agent 2 — Component tree & shared state** → writes `.backend-design/state/components.json`
 
-**Agent 4 — Forms, buttons, and auth surface** (breadth: very thorough)
+> Map every component file under `src/`, `components/`, `app/`, `pages/`, `ui/`. Also catalog every React Context, every Zustand/Redux/Jotai/Recoil/MobX store, and every `localStorage`/`sessionStorage`/cookie key (search `localStorage.`, `sessionStorage.`, `document.cookie`, `cookies()` from `next/headers`).
+>
+> Write JSON to `.backend-design/state/components.json` with this shape:
+>
+> ```json
+> {
+>   "components": [
+>     {
+>       "name": "PostCard",
+>       "file": "components/PostCard.tsx",
+>       "props": [{"name": "post", "type": "Post", "required": true}],
+>       "renders": ["Button", "Link", "Avatar"],
+>       "hooks": ["useRouter", "useAuth"],
+>       "reads": ["Post.title", "Post.body", "Post.author.name"],
+>       "evidence": ["components/PostCard.tsx:1"]
+>     }
+>   ],
+>   "shared_state": {
+>     "contexts": [
+>       {"file": "lib/AuthContext.tsx", "name": "AuthContext", "shape": {"user": "User | null"}, "consumers": ["app/layout.tsx:5", "components/Header.tsx:12"]}
+>     ],
+>     "stores": [
+>       {"file": "lib/cart.ts", "library": "zustand", "shape": {"items": "CartItem[]", "total": "number"}, "mutators": ["addItem", "removeItem"]}
+>     ],
+>     "storage_keys": [
+>       {"key": "auth_token", "type": "localStorage", "evidence": ["lib/api.ts:8"]}
+>     ]
+>   }
+> }
+> ```
+>
+> Infer props from usage if TS types are missing. Do not stop at depth 2 — go to leaf components. Do not output markdown — only the JSON file.
 
-> Inventory every form, input, and interactive button in this React/Next.js frontend. Include forms inside modals, in nested components, on settings pages — be exhaustive.
+**Agent 3 — Network calls & API contracts** → writes `.backend-design/state/endpoints.json`
+
+> Find every outbound HTTP call: `fetch(`, `axios.`, `ky.`, `useSWR`, `useQuery`, `useMutation`, `<form action=`, server actions (`"use server"`), plus every existing `app/api/*` or `pages/api/*` handler.
 >
-> For each form:
-> - file:line, form name/purpose
-> - Every input: `name`, type, placeholder, default value, validation rules (zod/yup schema reference, HTML `required`/`pattern`/`minLength`/`maxLength`/`min`/`max`)
-> - Submit target (URL or handler function)
-> - Success/error UI behavior (redirect, toast, inline error)
+> Write a JSON array to `.backend-design/state/endpoints.json` where each element is:
 >
-> For each interactive button **not inside a form** (anything with `onClick`, `onPress`, `formAction`):
-> - file:line, label text, parent component
-> - What the handler does — call an API, navigate, mutate local state, open a modal
-> - Flag destructive actions (Delete, Remove, Cancel subscription) explicitly
+> ```json
+> {
+>   "method": "POST",
+>   "path": "/api/posts",
+>   "request_body": {"title": "string", "body": "string"},
+>   "query": {},
+>   "response": "Post",
+>   "triggered_by": ["components/NewPostForm.tsx:67"],
+>   "consuming_component": "app/posts/page.tsx",
+>   "auth_header": "Bearer token from localStorage auth_token",
+>   "existing_handler": null,
+>   "evidence": ["lib/api.ts:34"]
+> }
+> ```
 >
-> Separately flag every screen, form, or button related to **auth**: signup, login, logout, password reset, email verification, OAuth provider buttons, magic link, MFA/TOTP, account deletion, change password, change email.
+> Resolve template literals and path params where possible. If a Next.js API route handler already exists, set `existing_handler` to its file path so it's not duplicated. Do not output markdown — only the JSON file.
+
+**Agent 4 — Forms, buttons, auth surface** → writes `.backend-design/state/forms.json`
+
+> Inventory every form, every input, every interactive button (including those inside modals and nested components). Flag every auth-related element: signup, login, logout, password reset, email verification, OAuth, magic link, MFA, account deletion, change password, change email.
 >
-> Return markdown grouped by: `## Forms`, `## Standalone buttons`, `## Auth surface`.
+> Write JSON to `.backend-design/state/forms.json` with this shape:
+>
+> ```json
+> {
+>   "forms": [
+>     {
+>       "id": "NewPostForm",
+>       "file": "components/NewPostForm.tsx:12",
+>       "purpose": "Create a new post",
+>       "inputs": [
+>         {"name": "title", "type": "text", "validation": {"required": true, "minLength": 3, "maxLength": 200}},
+>         {"name": "body", "type": "textarea", "validation": {"required": true}}
+>       ],
+>       "submits_to": "POST /api/posts",
+>       "on_success": "redirect to /posts/[id]",
+>       "evidence": ["components/NewPostForm.tsx:12"]
+>     }
+>   ],
+>   "standalone_buttons": [
+>     {
+>       "file": "components/PostCard.tsx:42",
+>       "label": "Delete",
+>       "action": "api_call",
+>       "destructive": true,
+>       "target": "DELETE /api/posts/:id",
+>       "evidence": ["components/PostCard.tsx:42"]
+>     }
+>   ],
+>   "auth_surface": {
+>     "signup": {"present": true, "file": "app/signup/page.tsx"},
+>     "login": {"present": true, "file": "app/login/page.tsx"},
+>     "logout": {"present": true, "trigger": "components/Header.tsx:23"},
+>     "password_reset": {"present": false},
+>     "email_verification": {"present": false},
+>     "oauth_providers": []
+>   }
+> }
+> ```
+>
+> Action values: `api_call`, `navigate`, `local_state`, `open_modal`. Set `destructive: true` for Delete/Remove/Cancel. Do not output markdown — only the JSON file.
 
 ---
 
-#### Phase 1b — Relationship synthesis (you, not an agent)
+#### Phase 1b — Cross-file self-check
 
-After all four agents return, **do not just concatenate their output and stop.** Read all four reports yourself and write a synthesis file at `./.backend-design/inventory.md` containing:
+After all four agents return, before moving on:
 
-1. The four raw agent reports (verbatim).
-2. A new top section: **`# Inferred entity relationships`**.
-
-For the entity relationships section, identify the entities the UI implies (User, Post, Comment, Order, etc.) and map how they relate. Evidence patterns:
-
-- A list view of X showing "by Y" → X belongs to Y (one-to-many)
-- A detail page for X that renders a list of Y → X has many Y
-- A form for X with a `<select>` of Y → X has FK to Y
-- A multi-select / tag input → many-to-many (needs a join table)
-- Nested URL `/x/:xId/y/:yId` → Y belongs to X
-- Component props passing `xId` and `yId` together → likely related
-- A "profile" or "account" screen → entity belongs to User
-
-For each relationship, **cite the file:line evidence**. Be explicit about cardinality (1:1, 1:N, N:N) and which side owns the FK. Group ambiguous cases under a `## Ambiguous relationships` subsection — those become Open Questions in Phase 2, not silent assumptions.
-
-This synthesis is the single most important artifact of Phase 1. Phase 2 design quality is bounded by the quality of this map.
-
-Before moving to Phase 2, do a self-check pass:
-- Does every screen from Agent 1 appear in the navigation graph?
-- Does every component rendered in JSX appear in Agent 2's tree?
-- Does every network call from Agent 3 map to a triggering button/form from Agent 4?
-- Does every entity in the relationship map have a backing screen or form?
-
-If any of those checks fail, re-spawn the relevant agent with a tighter brief before continuing.
+1. Confirm all four JSON files exist and parse: `for f in screens components endpoints forms; do node -e "JSON.parse(require('fs').readFileSync('.backend-design/state/$f.json'))" || echo "FAIL: $f.json"; done`
+2. Spot-check: does every network call in `endpoints.json` have a matching `triggered_by` element that exists in `forms.json` (a form or button)? Does every component named in `screens[].children` appear in `components.json`?
+3. If you find gaps, re-spawn the relevant agent with a tighter brief. Do not paper over gaps in the synthesis step.
 
 ---
 
 ### Phase 2 — Design synthesis
 
-Spawn **one `Plan` subagent**. Give it the entire `.backend-design/inventory.md` from Phase 1 (which now includes the relationship synthesis) plus this brief:
+Spawn **one `Plan` subagent** with `model: "sonnet"`. It reads the four JSON files from Phase 1, infers entities and relationships, refines endpoints, and writes more JSON files plus the human-readable design doc.
 
-> You are designing the backend for a React/Next.js frontend. The full UI inventory follows, ending with an `# Inferred entity relationships` section — treat that section as authoritative for the data model. Produce `backend-design.md` at the repo root with these sections in this order:
->
-> 1. **Overview** — one paragraph summarizing what the app does, inferred from the UI.
-> 2. **Entity map** — restate the entity relationships from the inventory as a quick reference. ASCII or markdown list, showing cardinalities. This anchors the data model.
-> 3. **Data model** — every Postgres table with columns, types, nullability, defaults, foreign keys, and indexes. Drive tables from the entity map + the forms (input fields → columns) + list/detail views (a posts index implies a `posts` table) + auth flows (always include `users` if signup or login exists). Use `snake_case`. Always include `id` (uuid, pk), `created_at`, `updated_at`. For every FK, name the relationship and on-delete behavior (`cascade` for owned children, `restrict` otherwise).
-> 4. **API endpoints** — one row per endpoint. Columns: `Method | Path | Auth | Request body (zod) | Response | Maps to frontend call`. Include every network call from the inventory **plus** implied CRUD (a list view of X implies `GET /x`; an edit form for X implies `PATCH /x/:id`; a "Delete X" button implies `DELETE /x/:id`). Every entry in the API table must cite either a network call file:line or a UI element file:line that justifies it.
-> 5. **Auth model** — JWT details (claims, expiry, refresh strategy if needed), password hashing, signup flow (email verification yes/no), login flow, logout flow, password reset flow if signup exists. RBAC roles if the UI shows multiple user types (admin pages, etc.).
-> 6. **Coverage check** — a table mapping every screen and every interactive element from Phase 1 to the backend artifact(s) that support it. One row per UI element. If a UI element has no backend mapping, either justify why (purely client-side) or flag it as an Open Question.
-> 7. **Open questions** — anything ambiguous. Example: "Frontend has a 'Share' button at PostCard.tsx:42 that doesn't call any API. Should this be `POST /posts/:id/share` or purely client-side Web Share?" Be concrete; cite file:line. Pull in everything from the `## Ambiguous relationships` section of the inventory.
->
-> Do not invent features the UI does not imply. Do not add admin endpoints unless an admin page exists. Be skeptical of speculative endpoints.
+Give it this brief:
 
-The Plan agent writes `backend-design.md` to the repo root.
+> Read all four files in `.backend-design/state/` (`screens.json`, `components.json`, `endpoints.json`, `forms.json`). They are the authoritative inventory of the React/Next.js frontend.
+>
+> Produce **four output artifacts**:
+>
+> **1. `.backend-design/state/entities.json`** — a JSON array of Postgres entities inferred from the UI. Each entity:
+>
+> ```json
+> {
+>   "name": "Post",
+>   "table": "posts",
+>   "fields": [
+>     {"name": "id", "type": "uuid", "pk": true, "default": "gen_random_uuid()"},
+>     {"name": "title", "type": "text", "required": true},
+>     {"name": "body", "type": "text", "required": true},
+>     {"name": "user_id", "type": "uuid", "required": true, "fk": "users.id"},
+>     {"name": "created_at", "type": "timestamptz", "default": "now()"},
+>     {"name": "updated_at", "type": "timestamptz", "default": "now()"}
+>   ],
+>   "indexes": [{"columns": ["user_id"]}, {"columns": ["created_at"]}],
+>   "evidence": ["components/NewPostForm.tsx:12", "app/posts/[id]/page.tsx:1"]
+> }
+> ```
+>
+> Infer entities from: forms (input fields → columns), list/detail screens, and the `entities_displayed` field on each screen. Always include a `users` entity if `forms.json -> auth_surface.signup.present` or `login.present` is true. Use `snake_case` for table/column names. Always include `id` (uuid pk), `created_at`, `updated_at`.
+>
+> **2. `.backend-design/state/relationships.json`** — a JSON array:
+>
+> ```json
+> {
+>   "from": "Post",
+>   "to": "User",
+>   "type": "many-to-one",
+>   "fk": "Post.user_id",
+>   "on_delete": "cascade",
+>   "evidence": ["app/posts/[id]/page.tsx:45"]
+> }
+> ```
+>
+> Cardinalities: `one-to-one`, `one-to-many`, `many-to-one`, `many-to-many`. For many-to-many, include a `join_table` field. Evidence patterns:
+> - List view of X showing "by Y" → X belongs to Y (many-to-one)
+> - Detail page for X rendering a list of Y → X has many Y (one-to-many)
+> - Form for X with `<select>` of Y → X has FK to Y
+> - Multi-select / tag input → many-to-many
+> - Nested URL `/x/[xId]/y/[yId]` → Y belongs to X
+>
+> **3. `.backend-design/state/auth.json`** — JSON object describing auth:
+>
+> ```json
+> {
+>   "strategy": "jwt",
+>   "algorithm": "HS256",
+>   "expiry": "7d",
+>   "secret_env": "JWT_SECRET",
+>   "password_hash": "bcrypt",
+>   "bcrypt_cost": 12,
+>   "signup": true,
+>   "email_verification": false,
+>   "password_reset": false,
+>   "oauth_providers": [],
+>   "rbac_roles": []
+> }
+> ```
+>
+> Set fields from `forms.json -> auth_surface`. Add `rbac_roles` if `screens.json` shows admin-only pages or role-gated UI.
+>
+> **4. Refine `.backend-design/state/endpoints.json`** — read the existing endpoints file, then **add** implied CRUD endpoints not yet listed:
+> - List view of X → `GET /x` (returns array)
+> - Detail view of X → `GET /x/:id`
+> - "New X" form → `POST /x`
+> - "Edit X" form → `PATCH /x/:id`
+> - "Delete X" button → `DELETE /x/:id`
+> - Signup form → `POST /auth/signup`
+> - Login form → `POST /auth/login`
+> - Logout button → `POST /auth/logout` (or stateless)
+>
+> For each added endpoint, set `triggered_by` to the UI element file:line that justifies it. Add an `auth` field (`required` or `none`) to every endpoint.
+>
+> **Do not invent features the UI does not imply.** Do not add admin endpoints unless an admin page exists in `screens.json`. Be skeptical of speculative endpoints.
+>
+> Write all four artifacts. Do not produce markdown — only JSON.
+
+After the Plan agent finishes, **run the validator**:
+
+```bash
+node ~/.claude/skills/backend-design/validate.mjs
+```
+
+If it exits non-zero, read the errors, fix them by editing the JSON files directly (use `Edit`), and re-run. **Do not proceed to the markdown render or Phase 3 until validation passes.** Warnings are OK to leave but should be acknowledged in Open Questions.
+
+Once validation passes, render `backend-design.md` at repo root from the JSON. You (the orchestrator) do this with `Read` + `Write` — no agent needed. Structure:
+
+1. **Overview** — one paragraph inferred from the UI.
+2. **Entity map** — markdown list of entities and relationships with cardinalities.
+3. **Data model** — one section per entity from `entities.json`, with column tables.
+4. **API endpoints** — one row per endpoint from `endpoints.json` (`Method | Path | Auth | Body | Response | Triggered by`).
+5. **Auth model** — rendered from `auth.json`.
+6. **Coverage check** — table mapping every screen + every interactive element to the backend artifact that supports it. Flag unmapped UI as Open Questions.
+7. **Open questions** — anything ambiguous, plus all validator warnings.
 
 ---
 
@@ -172,28 +333,37 @@ Only proceed to Phase 4 when the user gives explicit approval ("looks good", "pr
 
 ### Phase 4 — Code scaffolding
 
-Spawn **one `general-purpose` subagent** with this brief, after pasting the full contents of the approved `backend-design.md` into the prompt:
+Spawn **one `general-purpose` subagent** with `model: "sonnet"`. Its source of truth is the JSON files in `.backend-design/state/`, **not** the markdown doc. The markdown is for humans; the JSON is for codegen.
 
-> Scaffold a Node.js + Express + Postgres backend from the design doc below. Constraints:
+Brief:
+
+> Scaffold a Node.js + Express + Postgres backend. The authoritative spec is in `.backend-design/state/` — read these files first:
 >
-> - Use TypeScript with `"strict": true`.
-> - Use Prisma for the ORM. Generate `prisma/schema.prisma` from the data model section — one Prisma model per table, with the exact columns and relations specified.
-> - Use Express 4 with these middlewares: `cors`, `express.json()`, a JWT auth middleware that reads `Authorization: Bearer <token>` and attaches `req.user`, and a global error handler that returns `{ error: string }` with the right status code.
-> - Validate every request body with zod. Put schemas under `src/schemas/`. On validation failure return 400 with `{ error: "<zod message>" }`.
-> - One route file per resource under `src/routes/`. Mount them in `src/index.ts`.
-> - Hash passwords with bcrypt (cost 12). Sign JWTs with HS256, 7-day expiry, secret from `process.env.JWT_SECRET`.
-> - Do not implement endpoints that aren't in the design doc. Do not invent fields. If the design doc is ambiguous on a detail, pick the simpler option and add a `TODO:` comment.
-> - Include a `.env.example` with `DATABASE_URL` and `JWT_SECRET`.
-> - Include a `README.md` with these exact commands to run:
+> - `entities.json` — drives `prisma/schema.prisma` (one Prisma model per entity, exact columns/types/indexes)
+> - `relationships.json` — drives Prisma `@relation` directives and FK on-delete behavior
+> - `endpoints.json` — one route handler per entry, exactly as specified (method, path, auth, request body, response). Do not add endpoints that aren't in this file.
+> - `auth.json` — drives the auth middleware and `/auth/*` routes
+>
+> Constraints:
+>
+> - TypeScript with `"strict": true`.
+> - Prisma. Generate `prisma/schema.prisma` directly from `entities.json` + `relationships.json` — one Prisma model per entity, exact columns and `@relation` directives.
+> - Express 4 with: `cors`, `express.json()`, a JWT auth middleware reading `Authorization: Bearer <token>` and attaching `req.user`, a global error handler returning `{ error: string }` with the right status.
+> - Validate every request body with zod, generated from each endpoint's `request_body` field. Schemas under `src/schemas/`. Validation failure → 400 with `{ error: "<zod message>" }`.
+> - One route file per resource under `src/routes/`. Mount in `src/index.ts`.
+> - bcrypt password hashing (cost from `auth.json -> bcrypt_cost`). JWT signing per `auth.json` (algorithm, expiry, secret from `process.env[auth.secret_env]`).
+> - **Do not implement endpoints that aren't in `endpoints.json`. Do not invent fields not in `entities.json`.** If a spec field is ambiguous, pick the simpler option and add a `TODO:` comment citing the JSON path.
+> - `.env.example` with `DATABASE_URL` and `JWT_SECRET`.
+> - `README.md` with:
 >   ```
 >   pnpm install
->   cp .env.example .env   # then fill in DATABASE_URL and JWT_SECRET
+>   cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
 >   pnpm prisma migrate dev --name init
 >   pnpm dev
 >   ```
-> - The dev script should use `tsx watch src/index.ts`.
+> - Dev script: `tsx watch src/index.ts`.
 >
-> Target directory: `./backend/`. Do not modify the existing frontend code.
+> Target directory: `./backend/`. Do not modify frontend code.
 
 After the agent finishes, do a quick verification pass yourself:
 
@@ -213,4 +383,6 @@ Then report to the user: directory created, table count, endpoint count, and the
 - **Frontend is the source of truth.** Never add endpoints, tables, or fields the UI doesn't imply. If you think the UI is missing something obvious (e.g., login form but no signup form), surface it in the "Open questions" section instead of silently adding it.
 - **No alternate stacks.** Express + Prisma + Postgres + JWT + zod. If the user asks for FastAPI or Drizzle or sessions instead of JWTs, tell them this skill targets the fixed stack and ask if they want to proceed anyway or use a different approach.
 - **Don't touch the frontend.** This skill writes only to `./backend/`, `./backend-design.md`, and `./.backend-design/`.
+- **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`, not from `backend-design.md`. If the user edits the markdown during review, you must mirror their edits into the JSON files (or have them edit JSON directly) before proceeding to Phase 4.
+- **Run the validator at every synthesis step.** After Phase 1 (4 inventory files) and after Phase 2 (entities/relationships/auth). Never proceed past errors.
 - **One review gate, not many.** Don't pepper the user with `AskUserQuestion` calls during Phase 1 or 2 unless something is genuinely ambiguous about their *intent* for the skill (not about the UI — that goes in Open Questions in the design doc).
