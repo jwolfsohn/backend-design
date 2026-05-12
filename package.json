@@ -1,7 +1,7 @@
 {
   "name": "backend-design",
-  "version": "0.2.0",
-  "description": "Claude Code skill that analyzes a React/Next.js frontend and scaffolds a matching backend in the stack of your choice.",
+  "version": "0.3.0",
+  "description": "Claude Code skill that analyzes any modern web frontend (React, Vue, Svelte, Angular, Astro, Solid, Qwik, Remix, HTMX, vanilla, more) and scaffolds a matching backend in the stack of your choice.",
   "type": "module",
   "bin": {
     "backend-design": "./bin/backend-design.mjs"

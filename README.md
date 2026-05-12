@@ -1,6 +1,26 @@
 # backend-design
 
-A [Claude Code](https://claude.com/claude-code) skill that reads an existing React/Next.js frontend and scaffolds a matching backend in the stack of your choice.
+A [Claude Code](https://claude.com/claude-code) skill that reads an existing frontend in any modern web framework and scaffolds a matching backend in the stack of your choice.
+
+## Supported frontends
+
+Auto-detected via `package.json` and a couple of key files — no full-codebase scan needed:
+
+- **Next.js** (App Router or Pages Router)
+- **React** (Vite, CRA, generic SPA)
+- **Vue** (SPA)
+- **Nuxt** 3
+- **Svelte** / **SvelteKit**
+- **Angular** 17+
+- **Astro**
+- **SolidJS** / **SolidStart**
+- **Qwik** / Qwik City
+- **Remix** / React Router v7
+- **Gatsby**
+- **HTMX** (HTML attribute-driven)
+- **Vanilla** HTML + JS
+
+Each framework has dedicated search patterns in `prompts/frontend-patterns.md` so the inventory agents grep the right files (e.g. `.vue` for Vue, `+page.svelte` for SvelteKit, `*.component.ts` for Angular).
 
 ## What it does
 

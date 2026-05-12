@@ -1,11 +1,11 @@
 ---
 name: backend-design
-description: Analyze an existing React/Next.js frontend and scaffold a matching backend in the user's chosen stack (Express+Prisma, Fastify+Prisma, Hono+Drizzle, Next.js API routes, or FastAPI). Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. Two-step output — first a reviewable design doc (endpoints, DB schema, auth), then scaffolded code after the user approves.
+description: Analyze an existing frontend (Next.js, React, Vue, Nuxt, Svelte, SvelteKit, Angular, Astro, Solid, Qwik, Remix, Gatsby, HTMX, or vanilla HTML/JS) and scaffold a matching backend in the user's chosen stack (Express+Prisma, Fastify+Prisma, Hono+Drizzle, Next.js API routes, or FastAPI). Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. Two-step output — first a reviewable design doc (endpoints, DB schema, auth), then scaffolded code after the user approves.
 ---
 
 # backend-design
 
-You are about to design and scaffold a backend for an **existing React/Next.js frontend** in the current working directory. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
+You are about to design and scaffold a backend for an **existing frontend** in the current working directory. The frontend can be in any modern web framework — the CLI detects it automatically. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
 
 The stack is **not fixed** — it's selected by the user via `npx backend-design start` before activating this skill, and recorded in `.backend-design/config.json`. Supported stacks:
 
@@ -32,22 +32,16 @@ A validator at `~/.claude/skills/backend-design/validate.mjs` checks the state f
 Before Phase 1:
 
 1. **Read `.backend-design/config.json`**. If missing, tell the user:
-   > Run `npx backend-design start` first to pick your stack. Then re-invoke this skill.
+   > Run `npx backend-design start` first to detect your frontend and pick your stack. Then re-invoke this skill.
    Stop here.
 
-2. **Confirm the stack** with a one-line message: `Targeting <config.stack.label> with <config.auth.strategy> auth → <config.output_dir>`.
+2. **Confirm to the user** in one line: `Targeting <config.stack.label> with <config.auth.strategy> auth on <config.frontend.framework> → <config.output_dir>`.
 
-3. **Frontend sanity check.** Confirm `package.json` lists `react` or `next`, or there's an `app/` / `pages/` / `src/app/` / `src/pages/` directory. If not, stop and ask where the frontend lives.
+3. **Load framework patterns.** Read `~/.claude/skills/backend-design/prompts/frontend-patterns.md`. Extract the section whose heading matches `config.frontend.patterns_key`. You will inject this section into each Phase-1 agent's prompt so they search the right files. Keep it handy — call it `<<PATTERNS>>` in the agent briefs below.
 
-4. **Codebase size.** The CLI's `start` command already counted source files but if you want to double-check:
-   ```bash
-   find . -type f \( -name "*.tsx" -o -name "*.jsx" -o -name "*.ts" -o -name "*.js" \) \
-     -not -path "*/node_modules/*" -not -path "*/.next/*" \
-     -not -path "*/dist/*" -not -path "*/build/*" -not -path "*/.git/*" | wc -l
-   ```
-   Over 500 → warn. Over 1500 → refuse unless the user scopes down.
+   If `patterns_key` does not match any section in `frontend-patterns.md`, stop and tell the user: "Your detected framework `<framework>` is unrecognized. Edit `.backend-design/config.json` or use `prompts/frontend-patterns.md` patterns manually."
 
-5. **Create the state directory:**
+4. **Create the state directory:**
    ```bash
    mkdir -p .backend-design/state
    ```
@@ -73,7 +67,13 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 
 **Agent 1 — Screens & navigation** → writes `.backend-design/state/screens.json`
 
-> Walk every screen in this React/Next.js frontend. A screen = anything the user can navigate to or that takes over the viewport: a route, a modal, a drawer, a wizard step, a tab panel that swaps content, an empty state, an error state, a loading state. Do not skip "obvious" screens (404, sign-in, settings sub-pages). Search `app/`, `pages/`, `src/pages/`, `src/app/`, `react-router` / `tanstack-router` configs, and layout files (`layout.tsx`, `_app.tsx`, `_layout.tsx`).
+> Walk every screen in this frontend. A screen = anything the user can navigate to or that takes over the viewport: a route, a modal, a drawer, a wizard step, a tab panel that swaps content, an empty state, an error state, a loading state. Do not skip "obvious" screens (404, sign-in, settings sub-pages).
+>
+> Use these framework-specific search patterns:
+>
+> <<PATTERNS>>
+>
+> Apply the **Routes/screens** section. Cross-reference layout files. For mobile/desktop adaptations (responsive states), treat distinct visual breakpoints as separate screens only if they expose different functionality.
 >
 > Write a JSON array to `.backend-design/state/screens.json` where each element is:
 >
@@ -102,7 +102,13 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 
 **Agent 2 — Component tree & shared state** → writes `.backend-design/state/components.json`
 
-> Map every component file under `src/`, `components/`, `app/`, `pages/`, `ui/`. Also catalog every React Context, every Zustand/Redux/Jotai/Recoil/MobX store, and every `localStorage`/`sessionStorage`/cookie key (search `localStorage.`, `sessionStorage.`, `document.cookie`, `cookies()` from `next/headers`).
+> Map every component file in this frontend. Also catalog every shared-state container (Context/Provider, Zustand/Redux/Jotai/Recoil/MobX/Pinia/Vuex/NgRx stores) and every `localStorage`/`sessionStorage`/cookie key.
+>
+> Use these framework-specific search patterns:
+>
+> <<PATTERNS>>
+>
+> Apply the **Components** section to find component files. For shared state, search for the idioms appropriate to the framework (e.g. Pinia `defineStore` for Vue, services + DI for Angular, Svelte stores for SvelteKit).
 >
 > Write JSON to `.backend-design/state/components.json` with this shape:
 >
@@ -137,7 +143,13 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 
 **Agent 3 — Network calls & API contracts** → writes `.backend-design/state/endpoints.json`
 
-> Find every outbound HTTP call: `fetch(`, `axios.`, `ky.`, `useSWR`, `useQuery`, `useMutation`, `<form action=`, server actions (`"use server"`), plus every existing `app/api/*` or `pages/api/*` handler.
+> Find every outbound HTTP call in this frontend. Capture URL, method, request body, response shape, trigger, and any existing server-side handler (so it's preserved, not duplicated).
+>
+> Use these framework-specific search patterns:
+>
+> <<PATTERNS>>
+>
+> Apply the **Network calls** section. Some frameworks bundle the network call into the route file (Remix loaders, SvelteKit +page.server.ts, Astro endpoints, Nuxt server routes) — treat those as existing handlers and capture them in `existing_handler`.
 >
 > Write a JSON array to `.backend-design/state/endpoints.json` where each element is:
 >
@@ -161,6 +173,12 @@ Each agent **writes exactly one JSON file**. Do not let them output markdown —
 **Agent 4 — Forms, buttons, auth surface** → writes `.backend-design/state/forms.json`
 
 > Inventory every form, every input, every interactive button (including those inside modals and nested components). Flag every auth-related element: signup, login, logout, password reset, email verification, OAuth, magic link, MFA, account deletion, change password, change email.
+>
+> Use these framework-specific search patterns:
+>
+> <<PATTERNS>>
+>
+> Apply the **Forms** and **Auth hints** sections. Form syntax varies dramatically by framework — JSX `<form onSubmit>`, Vue `<form @submit>`, Svelte `<form on:submit>`, Angular `[formGroup]`, HTMX `<form hx-post>`, Astro `<form action="/api/...">`, etc. Find them all using the patterns above.
 >
 > Write JSON to `.backend-design/state/forms.json` with this shape:
 >
