@@ -1,7 +1,7 @@
 {
   "name": "backend-design",
-  "version": "0.1.0",
-  "description": "Claude Code skill that analyzes a React/Next.js frontend and scaffolds a matching Node.js + Express + Postgres backend.",
+  "version": "0.2.0",
+  "description": "Claude Code skill that analyzes a React/Next.js frontend and scaffolds a matching backend in the stack of your choice.",
   "type": "module",
   "bin": {
     "backend-design": "./bin/backend-design.mjs"
@@ -10,6 +10,7 @@
     "SKILL.md",
     "validate.mjs",
     "bin/",
+    "prompts/",
     "README.md",
     "LICENSE"
   ],
@@ -18,6 +19,10 @@
   },
   "scripts": {
     "test:validate": "node validate.mjs"
+  },
+  "dependencies": {
+    "picocolors": "^1.1.1",
+    "prompts": "^2.4.2"
   },
   "keywords": [
     "claude-code",
@@ -28,7 +33,11 @@
     "react",
     "nextjs",
     "express",
+    "fastify",
+    "hono",
     "prisma",
+    "drizzle",
+    "fastapi",
     "postgres"
   ],
   "license": "MIT",

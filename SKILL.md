@@ -1,30 +1,29 @@
 ---
 name: backend-design
-description: Analyze an existing React/Next.js frontend and produce a matching Node.js + Express + Postgres backend. Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. Two-step output — first a reviewable design doc (endpoints, DB schema, auth), then scaffolded TypeScript code after the user approves.
+description: Analyze an existing React/Next.js frontend and scaffold a matching backend in the user's chosen stack (Express+Prisma, Fastify+Prisma, Hono+Drizzle, Next.js API routes, or FastAPI). Activate on "/backend-design", "build a backend for this frontend", "generate the API and database for this app", "design a backend from the UI", or similar intent. Two-step output — first a reviewable design doc (endpoints, DB schema, auth), then scaffolded code after the user approves.
 ---
 
 # backend-design
 
-You are about to design and scaffold a backend for an **existing React/Next.js frontend** that lives in the current working directory. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it.
+You are about to design and scaffold a backend for an **existing React/Next.js frontend** in the current working directory. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
 
-The target backend stack is fixed:
+The stack is **not fixed** — it's selected by the user via `npx backend-design start` before activating this skill, and recorded in `.backend-design/config.json`. Supported stacks:
 
-- **Runtime**: Node.js 20+ with TypeScript
-- **Framework**: Express
-- **Database**: Postgres via Prisma
-- **Auth**: JWT (HS256) with bcrypt password hashing
-- **Validation**: zod on every request body
-- **Package manager**: pnpm
-
-Do not deviate from this stack unless the user explicitly asks.
+| `stack.id` | Codegen prompt |
+|------------|----------------|
+| `node-express-prisma` | `prompts/codegen-node-express-prisma.md` |
+| `node-fastify-prisma` | `prompts/codegen-node-fastify-prisma.md` |
+| `node-hono-drizzle`   | `prompts/codegen-node-hono-drizzle.md` |
+| `nextjs-prisma`       | `prompts/codegen-nextjs-prisma.md` |
+| `python-fastapi`      | `prompts/codegen-python-fastapi.md` |
 
 ## Workflow
 
-You will execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
+Execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
 
-All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and Phase-2 Plan agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them; the codegen agent in Phase 4 reads them directly.
+All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 Plan agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them; the codegen agent in Phase 4 reads them directly.
 
-A validator script at `~/.claude/skills/backend-design/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix any errors before continuing.
+A validator at `~/.claude/skills/backend-design/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing.
 
 ---
 
@@ -32,17 +31,23 @@ A validator script at `~/.claude/skills/backend-design/validate.mjs` checks the 
 
 Before Phase 1:
 
-1. **Frontend present?** Confirm `package.json` lists `react` or `next` as a dep, or there's an `app/` / `pages/` / `src/app/` / `src/pages/` directory. If not, stop and ask the user where the frontend lives.
+1. **Read `.backend-design/config.json`**. If missing, tell the user:
+   > Run `npx backend-design start` first to pick your stack. Then re-invoke this skill.
+   Stop here.
 
-2. **Codebase size.** Run:
+2. **Confirm the stack** with a one-line message: `Targeting <config.stack.label> with <config.auth.strategy> auth → <config.output_dir>`.
+
+3. **Frontend sanity check.** Confirm `package.json` lists `react` or `next`, or there's an `app/` / `pages/` / `src/app/` / `src/pages/` directory. If not, stop and ask where the frontend lives.
+
+4. **Codebase size.** The CLI's `start` command already counted source files but if you want to double-check:
    ```bash
    find . -type f \( -name "*.tsx" -o -name "*.jsx" -o -name "*.ts" -o -name "*.js" \) \
      -not -path "*/node_modules/*" -not -path "*/.next/*" \
      -not -path "*/dist/*" -not -path "*/build/*" -not -path "*/.git/*" | wc -l
    ```
-   If the count is **over 500**, warn the user: "This frontend has N source files; a full run will cost roughly \$5–15 in API tokens and ~10 minutes. Want me to scope down to a subdirectory (e.g. only `app/`)?" Wait for an answer before proceeding. Over 1500 files, refuse unless the user scopes down — the result will be noisy.
+   Over 500 → warn. Over 1500 → refuse unless the user scopes down.
 
-3. **Create the state directory:**
+5. **Create the state directory:**
    ```bash
    mkdir -p .backend-design/state
    ```
@@ -333,47 +338,29 @@ Only proceed to Phase 4 when the user gives explicit approval ("looks good", "pr
 
 ### Phase 4 — Code scaffolding
 
-Spawn **one `general-purpose` subagent** with `model: "sonnet"`. Its source of truth is the JSON files in `.backend-design/state/`, **not** the markdown doc. The markdown is for humans; the JSON is for codegen.
+The codegen prompt is **stack-specific**. Read `.backend-design/config.json` to get `stack.id`, then read the matching prompt file from this skill's `prompts/` directory:
 
-Brief:
+| `stack.id`            | Prompt file to read |
+|-----------------------|---------------------|
+| `node-express-prisma` | `~/.claude/skills/backend-design/prompts/codegen-node-express-prisma.md` |
+| `node-fastify-prisma` | `~/.claude/skills/backend-design/prompts/codegen-node-fastify-prisma.md` |
+| `node-hono-drizzle`   | `~/.claude/skills/backend-design/prompts/codegen-node-hono-drizzle.md` |
+| `nextjs-prisma`       | `~/.claude/skills/backend-design/prompts/codegen-nextjs-prisma.md` |
+| `python-fastapi`      | `~/.claude/skills/backend-design/prompts/codegen-python-fastapi.md` |
 
-> Scaffold a Node.js + Express + Postgres backend. The authoritative spec is in `.backend-design/state/` — read these files first:
+Use `Read` to load the relevant prompt file. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass that file's contents as the prompt, prefixed with:
+
+> The authoritative spec is in `.backend-design/state/*.json`. The user has chosen stack `<config.stack.id>` (<config.stack.label>) with auth strategy `<config.auth.strategy>` and output directory `<config.output_dir>`.
 >
-> - `entities.json` — drives `prisma/schema.prisma` (one Prisma model per entity, exact columns/types/indexes)
-> - `relationships.json` — drives Prisma `@relation` directives and FK on-delete behavior
-> - `endpoints.json` — one route handler per entry, exactly as specified (method, path, auth, request body, response). Do not add endpoints that aren't in this file.
-> - `auth.json` — drives the auth middleware and `/auth/*` routes
+> Use this brief:
 >
-> Constraints:
->
-> - TypeScript with `"strict": true`.
-> - Prisma. Generate `prisma/schema.prisma` directly from `entities.json` + `relationships.json` — one Prisma model per entity, exact columns and `@relation` directives.
-> - Express 4 with: `cors`, `express.json()`, a JWT auth middleware reading `Authorization: Bearer <token>` and attaching `req.user`, a global error handler returning `{ error: string }` with the right status.
-> - Validate every request body with zod, generated from each endpoint's `request_body` field. Schemas under `src/schemas/`. Validation failure → 400 with `{ error: "<zod message>" }`.
-> - One route file per resource under `src/routes/`. Mount in `src/index.ts`.
-> - bcrypt password hashing (cost from `auth.json -> bcrypt_cost`). JWT signing per `auth.json` (algorithm, expiry, secret from `process.env[auth.secret_env]`).
-> - **Do not implement endpoints that aren't in `endpoints.json`. Do not invent fields not in `entities.json`.** If a spec field is ambiguous, pick the simpler option and add a `TODO:` comment citing the JSON path.
-> - `.env.example` with `DATABASE_URL` and `JWT_SECRET`.
-> - `README.md` with:
->   ```
->   pnpm install
->   cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
->   pnpm prisma migrate dev --name init
->   pnpm dev
->   ```
-> - Dev script: `tsx watch src/index.ts`.
->
-> Target directory: `./backend/`. Do not modify frontend code.
+> <pasted contents of the codegen-*.md file>
 
-After the agent finishes, do a quick verification pass yourself:
+After the agent finishes, run the **stack-specific verification commands** listed at the bottom of the codegen prompt file. For Node stacks: `pnpm install`, ORM-specific generate command, `pnpm tsc --noEmit`. For Python: `pip install -e .`, `alembic check`, import smoke test.
 
-1. `cd backend && pnpm install` — must succeed.
-2. `pnpm prisma generate` — must succeed (catches schema syntax errors without needing a live DB).
-3. `pnpm tsc --noEmit` — must pass type check.
+If any verification step fails, fix it directly with `Edit` (these are usually small mistakes — typos, missing imports). Do not declare the task complete until verification passes.
 
-If any step fails, fix it directly (use `Edit`, not a new agent — these are usually small mistakes). Do not declare the task complete until all three pass.
-
-Then report to the user: directory created, table count, endpoint count, and the next-step command (`cd backend && pnpm install && ...`).
+Then report to the user: stack used, output directory, entity count, endpoint count, and the next-step command from the codegen prompt's "README run commands" section.
 
 ---
 
@@ -381,8 +368,8 @@ Then report to the user: directory created, table count, endpoint count, and the
 
 - **Do not skip Phase 3.** The user must see and approve the design doc before any backend code is written. This is the whole point of the skill.
 - **Frontend is the source of truth.** Never add endpoints, tables, or fields the UI doesn't imply. If you think the UI is missing something obvious (e.g., login form but no signup form), surface it in the "Open questions" section instead of silently adding it.
-- **No alternate stacks.** Express + Prisma + Postgres + JWT + zod. If the user asks for FastAPI or Drizzle or sessions instead of JWTs, tell them this skill targets the fixed stack and ask if they want to proceed anyway or use a different approach.
-- **Don't touch the frontend.** This skill writes only to `./backend/`, `./backend-design.md`, and `./.backend-design/`.
+- **Respect the chosen stack.** `.backend-design/config.json` records the user's choice. Do not deviate — if they picked `python-fastapi`, do not generate TypeScript. If `config.json` is missing, tell them to run `npx backend-design start` first.
+- **Don't touch the frontend** unless `stack.framework === "nextjs"`. For the Next.js stack, you may add files under `app/api/`, `lib/`, and `prisma/` in the existing project. For all other stacks, write only to `config.output_dir` (default `./backend`), `./backend-design.md`, and `./.backend-design/`.
 - **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`, not from `backend-design.md`. If the user edits the markdown during review, you must mirror their edits into the JSON files (or have them edit JSON directly) before proceeding to Phase 4.
 - **Run the validator at every synthesis step.** After Phase 1 (4 inventory files) and after Phase 2 (entities/relationships/auth). Never proceed past errors.
 - **One review gate, not many.** Don't pepper the user with `AskUserQuestion` calls during Phase 1 or 2 unless something is genuinely ambiguous about their *intent* for the skill (not about the UI — that goes in Open Questions in the design doc).

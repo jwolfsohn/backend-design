@@ -1,51 +1,53 @@
 # backend-design
 
-A [Claude Code](https://claude.com/claude-code) skill that reads an existing React/Next.js frontend and generates a matching Node.js + Express + Postgres backend.
+A [Claude Code](https://claude.com/claude-code) skill that reads an existing React/Next.js frontend and scaffolds a matching backend in the stack of your choice.
 
 ## What it does
-
-Point it at a frontend codebase and it:
 
 1. **Inventories** every screen, component, network call, form, button, and auth surface — in parallel, writing structured JSON state.
 2. **Synthesizes** entities, relationships, endpoints, and an auth model from the inventory.
 3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
 4. **Reviews** — produces a human-readable `backend-design.md` and pauses for your approval.
-5. **Scaffolds** a runnable Express + TypeScript + Prisma + Postgres backend under `./backend/` once you approve.
+5. **Scaffolds** a runnable backend in your chosen stack once you approve.
 
-The skill targets a fixed stack — Express, Prisma, Postgres, JWT, zod, bcrypt, TypeScript — so the output is predictable and idiomatic.
+## Supported stacks
+
+You pick one when you run `npx backend-design start`:
+
+| Stack | When to use |
+|-------|-------------|
+| **Node.js + Express + Prisma + Postgres** | Battle-tested default. Most ubiquitous. Easy to deploy. |
+| **Node.js + Fastify + Prisma + Postgres** | ~2× faster than Express. Schema validation built in. |
+| **Node.js + Hono + Drizzle + Postgres** | TypeScript-first, edge-ready. Drizzle is leaner than Prisma. |
+| **Next.js API routes + Prisma + Postgres** | Colocated with the frontend. Easiest Vercel deploy. |
+| **Python + FastAPI + SQLAlchemy + Postgres** | Strong typing, async by default. SQLAlchemy 2 + alembic. |
+
+Auth: JWT, sessions, or none. All stacks use bcrypt for password hashing.
 
 ## Install
-
-### Via npm (recommended)
 
 ```bash
 npx backend-design install
 ```
 
-This symlinks the package into `~/.claude/skills/backend-design`. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
+Symlinks the skill into `~/.claude/skills/backend-design`. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
 
-To uninstall: `npx backend-design uninstall`.
-
-### From source
-
-```bash
-git clone https://github.com/jwolfsohn/backend-design.git ~/code/backend-design
-ln -s ~/code/backend-design ~/.claude/skills/backend-design
-```
+Uninstall: `npx backend-design uninstall`.
 
 ## Use
 
-From a directory containing a React/Next.js frontend, in Claude Code:
+```bash
+cd my-frontend-project
+npx backend-design start      # interactive: pick stack, auth, output dir
+```
+
+Then open Claude Code in the same directory and run:
 
 ```
 /backend-design
 ```
 
-Or just describe the intent:
-
-> Build a backend for this frontend.
-
-The skill walks you through pre-flight checks, parallel inventory, synthesis, validation, review, and code generation.
+The skill walks through inventory, synthesis, validation, review, and code generation.
 
 ## Commands
 
@@ -53,91 +55,74 @@ The skill walks you through pre-flight checks, parallel inventory, synthesis, va
 |---------|--------------|
 | `npx backend-design install` | Symlink the skill into `~/.claude/skills/` |
 | `npx backend-design uninstall` | Remove the symlink |
-| `npx backend-design validate` | Validate `.backend-design/state/*.json` in the current directory against invariants |
-
-The validator is also invoked automatically by the skill at every synthesis step.
+| `npx backend-design start` | Interactive: pick stack + auth, write `.backend-design/config.json` |
+| `npx backend-design validate` | Validate `.backend-design/state/*.json` against invariants |
+| `npx backend-design help` | Show usage |
 
 ## State files
 
-All design state lives under `.backend-design/state/` as JSON — these are the single source of truth.
+All design state lives under `.backend-design/`:
 
 | File | Written by | Contents |
 |------|------------|----------|
-| `screens.json` | Phase 1 Agent 1 (sonnet) | Every screen with file, entities displayed, data fetches, nav graph |
-| `components.json` | Phase 1 Agent 2 (sonnet) | Every component, props, hooks, plus shared state (contexts, stores, storage keys) |
-| `endpoints.json` | Phase 1 Agent 3 (haiku) | Every network call discovered, then refined by Phase 2 with implied CRUD |
-| `forms.json` | Phase 1 Agent 4 (haiku) | Every form, every standalone button, auth surface |
-| `entities.json` | Phase 2 Plan agent | Inferred Postgres tables with columns, types, indexes |
-| `relationships.json` | Phase 2 Plan agent | FK relationships with cardinalities and on-delete behavior |
-| `auth.json` | Phase 2 Plan agent | JWT/bcrypt config, signup/login/etc. flags |
+| `config.json` | `start` command | Chosen stack, auth strategy, output dir |
+| `state/screens.json` | Phase 1 Agent 1 (sonnet) | Every screen, entities displayed, data fetches, nav graph |
+| `state/components.json` | Phase 1 Agent 2 (sonnet) | Every component, props, hooks, shared state |
+| `state/endpoints.json` | Phase 1 Agent 3 (haiku) + Phase 2 refine | Every API call + implied CRUD |
+| `state/forms.json` | Phase 1 Agent 4 (haiku) | Every form, button, auth surface |
+| `state/entities.json` | Phase 2 Plan agent | Inferred Postgres tables with columns/indexes |
+| `state/relationships.json` | Phase 2 Plan agent | FK relationships with cardinalities |
+| `state/auth.json` | Phase 2 Plan agent | JWT/bcrypt config, signup/login/etc. flags |
 
 Every JSON entry includes `evidence: ["file:line"]` so you can trace any decision back to the UI.
 
-## What gets generated
+## Generated backend layout
 
-After approval, you get `backend/`:
+Depends on the stack you pick. The Express stack produces:
 
 ```
 backend/
-  package.json              # express, prisma, bcrypt, jsonwebtoken, cors, zod, tsx
+  package.json
   tsconfig.json
-  prisma/schema.prisma      # tables from entities.json + relationships.json
+  prisma/schema.prisma
   src/
-    index.ts                # express bootstrap
-    db.ts                   # prisma client singleton
+    index.ts                # Express bootstrap
+    db.ts                   # Prisma client singleton
     middleware/auth.ts      # JWT verify -> req.user
-    routes/                 # one file per resource (from endpoints.json)
-    schemas/                # zod validators (from endpoints[].request_body)
-  .env.example              # DATABASE_URL, JWT_SECRET
-  README.md                 # run instructions
+    routes/<resource>.ts    # one file per resource
+    schemas/<resource>.ts   # zod request validators
+  .env.example
+  README.md
 ```
 
-Run it:
-
-```bash
-cd backend
-pnpm install
-cp .env.example .env       # fill in DATABASE_URL and JWT_SECRET
-pnpm prisma migrate dev --name init
-pnpm dev
-```
-
-## Stack assumptions
-
-| Layer        | Choice                        |
-|--------------|-------------------------------|
-| Runtime      | Node.js 20+, TypeScript strict|
-| Framework    | Express 4                     |
-| Database     | Postgres via Prisma           |
-| Auth         | JWT (HS256), 7-day expiry     |
-| Passwords    | bcrypt, cost 12               |
-| Validation   | zod on every request body     |
-| Package mgr  | pnpm                          |
-
-This is opinionated on purpose. If you need a different stack, fork and edit `SKILL.md`.
+See `prompts/codegen-*.md` for each stack's exact layout.
 
 ## Cost
 
 Token usage on a medium Next.js app (~200 source files):
 
-- Phase 1 (4 parallel inventory agents): ~80K tokens (Agents 3 & 4 on Haiku, 1 & 2 on Sonnet)
-- Phase 2 (synthesis + validation): ~25K tokens
-- Phase 4 (codegen): ~40K tokens
+| Phase | Tokens | Cost |
+|-------|--------|------|
+| Phase 1 — 4 parallel inventory agents (Haiku ×2 + Sonnet ×2) | ~80K | ~$0.40 |
+| Phase 2 — synthesis + validation (Sonnet) | ~25K | ~$0.25 |
+| Phase 4 — codegen (Sonnet) | ~40K | ~$0.40 |
+| **Total** | ~145K | **~$1–3** |
 
-Rough total: ~$1-3 per run on the default model mix. On larger codebases (>500 files) the skill will warn you and offer to scope down before starting.
+On larger codebases (>500 files) the `start` command and the skill itself will warn and offer to scope down.
 
-## How it works under the hood
+## How it works
 
-`SKILL.md` is a runbook for Claude Code, not executable code. When the skill activates, Claude:
+`SKILL.md` is a runbook for Claude Code, not executable code. When the skill activates:
 
-1. Runs a pre-flight check (frontend present, file count under threshold).
-2. Spawns four `Explore` subagents in parallel for the frontend inventory — each writes one JSON file. Agents 3 & 4 use Haiku; 1 & 2 use Sonnet.
-3. Spawns one `Plan` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`.
-4. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
-5. Renders `backend-design.md` from the JSON and pauses for your approval.
-6. Spawns one `general-purpose` subagent (Sonnet) to scaffold the backend, reading the JSON files directly. Verifies the scaffold compiles before reporting done.
+1. Reads `.backend-design/config.json` to know which stack to target.
+2. Runs a pre-flight check (frontend detected, file count under threshold).
+3. Spawns four `Explore` subagents in parallel for the frontend inventory. Each writes one JSON file. Agents 3 & 4 use Haiku; 1 & 2 use Sonnet.
+4. Spawns one `Plan` subagent (Sonnet) for the design synthesis — it writes `entities.json`, `relationships.json`, `auth.json` and refines `endpoints.json`.
+5. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
+6. Renders `backend-design.md` from the JSON and pauses for your approval.
+7. Reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md`, then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend. Verifies the scaffold compiles before reporting done.
 
-No custom subagent definitions, no plugins — just the built-in Claude Code agents being given specific prompts with model pinning.
+No custom subagent definitions, no plugins — just the built-in Claude Code agents with model pinning and stack-specific prompts.
 
 ## License
 
