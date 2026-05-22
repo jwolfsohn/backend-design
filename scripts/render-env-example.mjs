@@ -276,12 +276,20 @@ function loadJson(path) {
 }
 
 export function runRender(cwd = process.cwd()) {
+  const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
+  if (config?.stack?.id === "s2ai-schema") {
+    return null;
+  }
   const out = renderEnvExample(cwd);
   writeFileSync(join(cwd, OUTPUT_FILE), out.endsWith("\n") ? out : out + "\n");
   return out;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  runRender();
-  console.log(`Wrote ./${OUTPUT_FILE}`);
+  const result = runRender();
+  if (result === null) {
+    console.log(`Skipped ${OUTPUT_FILE} (s2ai-schema stack has no server to configure).`);
+  } else {
+    console.log(`Wrote ./${OUTPUT_FILE}`);
+  }
 }

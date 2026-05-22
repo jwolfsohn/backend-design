@@ -44,6 +44,7 @@ You pick one when you run `npx backend-design start`:
 | **Node.js + Hono + Drizzle + Postgres** | TypeScript-first, edge-ready. Drizzle is leaner than Prisma. |
 | **Next.js API routes + Prisma + Postgres** | Colocated with the frontend. Easiest Vercel deploy. |
 | **Python + FastAPI + SQLAlchemy + Postgres** | Strong typing, async by default. SQLAlchemy 2 + alembic. |
+| **s2ai schema only** | Emit a Mermaid `schema.mmd` for s2ai. No server scaffolded — you run s2ai yourself. |
 
 Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions are not yet implemented in any of the codegen prompts — pick JWT or scaffold sessions yourself afterwards.)
 
@@ -151,6 +152,8 @@ backend/
 ```
 
 The Next.js stack adds files inside the existing project (no separate `backend/` dir) — `app/api/<resource>/route.ts` per endpoint, `lib/db.ts`, `lib/auth.ts`, `prisma/schema.prisma`. The Fastify and Hono stacks mirror the Express layout with stack-appropriate names (`plugins/`, sub-apps). The FastAPI stack uses `app/models/`, `app/routers/`, `app/schemas/` plus `alembic/`. See `prompts/codegen-*.md` for each stack's exact layout.
+
+The `s2ai-schema` stack is different — no backend dir, no codegen. It writes a single `schema.mmd` at repo root with the inferred entities, relationships, and non-CRUD endpoints (as `%%` comments). `@dictionary` regex blocks and the `@service` auth block are left as TODO comments for you to fill in by hand before feeding the file into s2ai's own pipeline.
 
 ## Cost
 

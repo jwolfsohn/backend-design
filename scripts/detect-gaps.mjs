@@ -84,6 +84,13 @@ function detectMissingEnvVars(state, config, env) {
   const auth = state.auth;
   const endpoints = state.endpoints ?? [];
 
+  // The s2ai-schema stack emits a .mmd file and stops — there is no runtime to configure.
+  // DATABASE_URL, JWT_SECRET, webhook/OAuth secrets, etc. all live in whatever runtime
+  // s2ai's pipeline produces, not here.
+  if (config?.stack?.id === "s2ai-schema") {
+    return gaps;
+  }
+
   if (config?.stack?.database === "postgres" && !env.has("DATABASE_URL")) {
     gaps.push({
       type: "missing_env_var",

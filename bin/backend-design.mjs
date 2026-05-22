@@ -62,6 +62,16 @@ const STACKS = [
     orm: "sqlalchemy",
     database: "postgres",
   },
+  {
+    id: "s2ai-schema",
+    label: "s2ai schema (emit schema.mmd only)",
+    tagline: "Write a Mermaid .mmd for s2ai. You run s2ai yourself.",
+    language: "schema",
+    runtime: "none",
+    framework: "s2ai",
+    orm: "none",
+    database: "none",
+  },
 ];
 
 const AUTH_OPTIONS = [
@@ -399,19 +409,27 @@ async function start() {
   if (vibeResp.vibe_coder === undefined) process.exit(130);
   blank();
 
-  let defaultOut = stack.framework === "nextjs" ? "." : "./backend";
-  step("Output directory");
-  const dirResp = await prompts(
-    {
-      type: "text",
-      name: "out",
-      message: "directory",
-      initial: defaultOut,
-    },
-    { onCancel: () => process.exit(130) }
-  );
-  if (!dirResp.out) process.exit(130);
-  blank();
+  let outDir;
+  if (stack.id === "s2ai-schema") {
+    outDir = ".";
+    ok("output: ./schema.mmd at repo root (schema-only stack ignores output dir)");
+    blank();
+  } else {
+    const defaultOut = stack.framework === "nextjs" ? "." : "./backend";
+    step("Output directory");
+    const dirResp = await prompts(
+      {
+        type: "text",
+        name: "out",
+        message: "directory",
+        initial: defaultOut,
+      },
+      { onCancel: () => process.exit(130) }
+    );
+    if (!dirResp.out) process.exit(130);
+    outDir = dirResp.out;
+    blank();
+  }
 
   const pkgManager = detectPackageManager(cwd);
   ok(`detected package manager: ${pkgManager}`);
@@ -431,7 +449,7 @@ async function start() {
     },
     auth: { strategy: authResp.auth },
     vibe_coder: vibeResp.vibe_coder,
-    output_dir: dirResp.out,
+    output_dir: outDir,
     pkg_manager: pkgManager,
     frontend: front,
   };
@@ -448,7 +466,7 @@ async function start() {
   console.log(`  ${pc.dim("stack:")}     ${stack.label}`);
   console.log(`  ${pc.dim("auth:")}      ${authResp.auth}`);
   console.log(`  ${pc.dim("vibe:")}      ${vibeResp.vibe_coder ? "on" : "off"}`);
-  console.log(`  ${pc.dim("output:")}    ${dirResp.out}`);
+  console.log(`  ${pc.dim("output:")}    ${outDir}`);
   console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
   blank();
   console.log(pc.bold("  Next step"));
@@ -525,11 +543,12 @@ async function gaps() {
     const result = mod.runDetect(process.cwd());
     const exitCode = mod.printResults(result);
     // Refresh the env template too — it derives from the same state and gaps and the user
-    // expects them in sync.
+    // expects them in sync. The renderer returns null for the s2ai-schema stack (no server
+    // to configure), so don't claim we wrote a file when we didn't.
     try {
       const envMod = await import("../scripts/render-env-example.mjs");
-      envMod.runRender(process.cwd());
-      ok("refreshed backend-design.env.example");
+      const rendered = envMod.runRender(process.cwd());
+      if (rendered !== null) ok("refreshed backend-design.env.example");
     } catch (e) {
       warn(`could not refresh backend-design.env.example: ${e.message}`);
     }

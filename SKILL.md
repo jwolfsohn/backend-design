@@ -18,6 +18,7 @@ The stack is **not fixed** — it's selected by the user via `npx backend-design
 | `node-hono-drizzle`   | `prompts/codegen-node-hono-drizzle.md` |
 | `nextjs-prisma`       | `prompts/codegen-nextjs-prisma.md` |
 | `python-fastapi`      | `prompts/codegen-python-fastapi.md` |
+| `s2ai-schema`         | _(no prompt — Phase 4 runs `scripts/render-s2ai-schema.mjs` to emit `./schema.mmd` only)_ |
 
 ## Workflow
 
@@ -520,6 +521,8 @@ node <SKILL_DIR>/scripts/render-env-example.mjs
 
 This writes `./backend-design.env.example` at the repo root with every env var the design requires (DATABASE_URL, JWT_SECRET, webhook secrets per source, OAuth `<PROVIDER>_CLIENT_ID/SECRET`, email provider options, UPLOADS_DIR, NODE_ENV/PORT). Each var has a one-line comment explaining what it's for and where to get the value. The user can `cp backend-design.env.example .env` and fill in the blanks.
 
+**Exception:** for the `s2ai-schema` stack, `render-env-example.mjs` returns without writing — there is no server to configure, so don't surface a "wrote env template" message. `detect-gaps.mjs` also skips its `missing_env_var` checks for this stack; the remaining `unwired_button`, `missing_auth_ui`, and `external_account_unconfirmed` gaps still apply and are still surfaced in `backend-design-next-steps.md`.
+
 **Checkpoint write** (end of Phase 2.5): merge `{ phase_2_5_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
 ---
@@ -551,6 +554,15 @@ The codegen prompt is **stack-specific**. Read `.backend-design/config.json` to 
 | `node-hono-drizzle`   | `<SKILL_DIR>/prompts/codegen-node-hono-drizzle.md` |
 | `nextjs-prisma`       | `<SKILL_DIR>/prompts/codegen-nextjs-prisma.md` |
 | `python-fastapi`      | `<SKILL_DIR>/prompts/codegen-python-fastapi.md` |
+| `s2ai-schema`         | _(no prompt — see schema-only branch below)_ |
+
+**Schema-only branch.** If `config.stack.id === "s2ai-schema"`, **do not spawn a codegen agent**. Instead run:
+
+```bash
+node <SKILL_DIR>/scripts/render-s2ai-schema.mjs
+```
+
+It reads `.backend-design/state/*.json` and writes `./schema.mmd` at the repo root (the chosen `output_dir` is ignored for this stack). No verification commands apply — there is no compile step, no startup smoke test. Report to the user: file path, entity count, relationship count, and how many non-CRUD endpoints were emitted as commented hints. Skip directly to the Phase 4 checkpoint write. The user supplies `@dictionary` regex blocks and the `@service` auth block by hand, then runs s2ai's own `make` pipeline against the file.
 
 Use `Read` to load the relevant prompt file. **If any endpoint in `endpoints.json` has `temporary: true`**, also `Read` `<SKILL_DIR>/prompts/codegen-placeholders.md` and concatenate it ahead of the stack-specific prompt. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass the assembled prompt:
 
@@ -602,7 +614,7 @@ Then report to the user: stack used, output directory, entity count, endpoint co
 - **Do not skip Phase 3.** The user must see and approve the design doc before any backend code is written. This is the whole point of the skill.
 - **Frontend is the source of truth.** Never add endpoints, tables, or fields the UI doesn't imply. If you think the UI is missing something obvious (e.g., login form but no signup form), surface it in the "Open questions" section instead of silently adding it.
 - **Respect the chosen stack.** `.backend-design/config.json` records the user's choice. Do not deviate — if they picked `python-fastapi`, do not generate TypeScript. If `config.json` is missing, tell them to run `npx backend-design start` first.
-- **Don't touch the frontend** unless `stack.framework === "nextjs"`. For the Next.js stack, you may add files under `app/api/`, `lib/`, and `prisma/` in the existing project. For all other stacks, write only to `config.output_dir` (default `./backend`), `./backend-design.md`, and `./.backend-design/`.
+- **Don't touch the frontend** unless `stack.framework === "nextjs"`. For the Next.js stack, you may add files under `app/api/`, `lib/`, and `prisma/` in the existing project. For all other stacks, write only to `config.output_dir` (default `./backend`), `./backend-design.md`, and `./.backend-design/`. **Exception:** `s2ai-schema` writes a single file `./schema.mmd` at the repo root regardless of `output_dir`.
 - **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`. `backend-design.md` is rendered deterministically from the JSON by `scripts/render-design.mjs` — any hand-edits to it will be overwritten. When the user wants design changes, edit the JSON and re-render.
 - **Run the validator at every synthesis step.** After Phase 1 (4 inventory files) and after Phase 2 (entities/relationships/auth). Never proceed past errors.
 - **One review gate, not many.** Don't pepper the user with `AskUserQuestion` calls during Phase 1 or 2 unless something is genuinely ambiguous about their *intent* for the skill (not about the UI — that goes in Open Questions in the design doc).
