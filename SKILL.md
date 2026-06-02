@@ -106,190 +106,24 @@ Pass the `model` parameter to the `Agent` tool when spawning each agent (e.g. `A
 
 Each agent **writes exactly one JSON file**. Do not let them output markdown — only the JSON. If an agent writes markdown by mistake, re-spawn it with the schema reminder.
 
-**Agent 1 — Screens & navigation** → writes `.backend-design/state/screens.json`
+The four agents and their brief files:
 
-> Walk every screen in this frontend. A screen = anything the user can navigate to or that takes over the viewport: a route, a modal, a drawer, a wizard step, a tab panel that swaps content, an empty state, an error state, a loading state. Do not skip "obvious" screens (404, sign-in, settings sub-pages).
->
-> Use these framework-specific search patterns:
->
-> <<PATTERNS>>
->
-> Apply the **Routes/screens** section. Cross-reference layout files. For mobile/desktop adaptations (responsive states), treat distinct visual breakpoints as separate screens only if they expose different functionality.
->
-> Write a JSON array to `.backend-design/state/screens.json` where each element is:
->
-> ```json
-> {
->   "id": "post-detail",
->   "path": "/posts/[id]",
->   "trigger": null,
->   "file": "app/posts/[id]/page.tsx",
->   "entities_displayed": ["Post", "Comment", "User"],
->   "children": ["PostBody", "CommentList", "CommentForm"],
->   "data_fetches": [
->     {"method": "GET", "url": "/api/posts/[id]", "consumed_at": "app/posts/[id]/page.tsx:12"},
->     {"method": "GET", "url": "/api/posts/[id]/comments", "consumed_at": "app/posts/[id]/page.tsx:18"}
->   ],
->   "nav_out": [
->     {"to": "/users/[id]", "trigger_label": "author avatar"},
->     {"to": "/posts/[id]/edit", "trigger_label": "Edit"}
->   ],
->   "auth_required": false,
->   "evidence": ["app/posts/[id]/page.tsx:1"]
-> }
-> ```
->
-> For non-URL screens (modals, wizard steps): set `path` to `null` and fill `trigger` with the file:line and label of what opens it. Always include `evidence`. Do not output any markdown — only write the JSON file. Be exhaustive.
+| Agent | Brief file | Output file |
+|---|---|---|
+| 1. Screens & navigation | `<SKILL_DIR>/prompts/inventory/screens.md` | `.backend-design/state/screens.json` |
+| 2. Component tree & shared state | `<SKILL_DIR>/prompts/inventory/components.md` | `.backend-design/state/components.json` |
+| 3. Network calls & API contracts | `<SKILL_DIR>/prompts/inventory/endpoints.md` | `.backend-design/state/endpoints.json` |
+| 4. Forms, buttons, auth surface | `<SKILL_DIR>/prompts/inventory/forms.md` | `.backend-design/state/forms.json` |
 
-**Agent 2 — Component tree & shared state** → writes `.backend-design/state/components.json`
+The orchestrator does NOT need to read these brief files. Spawn each subagent with the prompt template below — substituting the brief file path and output file path — and let the subagent `Read` both its brief and the patterns file directly. This keeps the orchestrator's context lean.
 
-> Map every component file in this frontend. Also catalog every shared-state container (Context/Provider, Zustand/Redux/Jotai/Recoil/MobX/Pinia/Vuex/NgRx stores) and every `localStorage`/`sessionStorage`/cookie key.
->
-> Use these framework-specific search patterns:
->
-> <<PATTERNS>>
->
-> Apply the **Components** section to find component files. For shared state, search for the idioms appropriate to the framework (e.g. Pinia `defineStore` for Vue, services + DI for Angular, Svelte stores for SvelteKit).
->
-> Write JSON to `.backend-design/state/components.json` with this shape:
->
-> ```json
-> {
->   "components": [
->     {
->       "name": "PostCard",
->       "file": "components/PostCard.tsx",
->       "props": [{"name": "post", "type": "Post", "required": true}],
->       "renders": ["Button", "Link", "Avatar"],
->       "hooks": ["useRouter", "useAuth"],
->       "reads": ["Post.title", "Post.body", "Post.author.name"],
->       "evidence": ["components/PostCard.tsx:1"]
->     }
->   ],
->   "shared_state": {
->     "contexts": [
->       {"file": "lib/AuthContext.tsx", "name": "AuthContext", "shape": {"user": "User | null"}, "consumers": ["app/layout.tsx:5", "components/Header.tsx:12"]}
->     ],
->     "stores": [
->       {"file": "lib/cart.ts", "library": "zustand", "shape": {"items": "CartItem[]", "total": "number"}, "mutators": ["addItem", "removeItem"]}
->     ],
->     "storage_keys": [
->       {"key": "auth_token", "type": "localStorage", "evidence": ["lib/api.ts:8"]}
->     ]
->   }
-> }
-> ```
->
-> Infer props from usage if TS types are missing. Do not stop at depth 2 — go to leaf components. Do not output markdown — only the JSON file.
+**Prompt template** (use verbatim, four times, varying only `<BRIEF>` and `<OUTPUT>`):
 
-**Agent 3 — Network calls & API contracts** → writes `.backend-design/state/endpoints.json`
+> Read `<<PATTERNS_FILE>>` first — it has the framework-specific search patterns you'll need.
+> Then read `<BRIEF>` for your inventory instructions and JSON schema.
+> Then walk the frontend and write your output to `<OUTPUT>`. Do not output markdown — only the JSON file.
 
-> Find every outbound HTTP call in this frontend. Capture URL, method, request body, response shape, trigger, and any existing server-side handler (so it's preserved, not duplicated).
->
-> Use these framework-specific search patterns:
->
-> <<PATTERNS>>
->
-> Apply the **Network calls** section. Some frameworks bundle the network call into the route file (Remix loaders, SvelteKit +page.server.ts, Astro endpoints, Nuxt server routes) — treat those as existing handlers and capture them in `existing_handler`.
->
-> Write a JSON array to `.backend-design/state/endpoints.json` where each element is:
->
-> ```json
-> {
->   "method": "POST",
->   "path": "/api/posts",
->   "request_body": {"title": "string", "body": "string"},
->   "query": {},
->   "response": "Post",
->   "triggered_by": ["components/NewPostForm.tsx:67"],
->   "consuming_component": "app/posts/page.tsx",
->   "auth_header": "Bearer token from localStorage auth_token",
->   "existing_handler": null,
->   "is_external": false,
->   "external_origin": null,
->   "evidence": ["lib/api.ts:34"]
-> }
-> ```
->
-> Endpoints may also carry `required_role: string | string[] | null` (default null) and `content_type: "multipart/form-data" | "application/json"` — both are set in Phase 2, not here. Leave them absent in Phase 1.
->
-> **List-fetch enrichment.** For every GET that returns an array (i.e. a list endpoint), inspect the consuming screen for pagination, filter, and sort UI and capture them:
->
-> ```json
-> {
->   "method": "GET",
->   "path": "/api/posts",
->   "response": "Post[]",
->   "pagination": {"strategy": "cursor", "limit_param": "limit", "cursor_param": "cursor"},
->   "filterable_fields": ["status", "author_id"],
->   "sortable_fields": ["created_at", "title"]
-> }
-> ```
->
-> Strategies: `"cursor"` (infinite scroll, "load more" button, cursor in URL), `"offset"` (numbered page links, `?page=2`), or `null` (no pagination — small fixed list, no scroll trigger). Default `limit_param: "limit"`, `cursor_param: "cursor"` (cursor strategy) or `offset_param: "offset"` (offset strategy). Filterable fields: search inputs, dropdown filters, status tabs — capture the entity column name they correspond to. Sortable fields: sortable table headers, sort dropdowns.
->
-> **Distinguish user-backend calls from third-party API calls.** If the URL is an absolute URL whose origin is not the app itself — e.g. `https://api.stripe.com/...`, `https://api.openai.com/...`, `https://maps.googleapis.com/...` — set `is_external: true`, `external_origin: "<host>"`, leave `path` as the full URL, and do NOT generate a backend handler for it. Relative URLs (`/api/...`) and same-origin URLs are `is_external: false`.
->
-> **Detect incoming webhooks.** If you find an existing server-side handler under `app/api/webhook/`, `pages/api/webhook/`, `src/routes/api/webhook/`, `app/api/webhooks/`, or any handler that reads a header matching `*-Signature` (e.g. `Stripe-Signature`, `X-Hub-Signature-256`), add a corresponding entry with `is_webhook: true`, `webhook_source: "<inferred-source>"` (stripe, github, etc., from path or signature header), `signature_header: "<exact header name>"`, and `triggered_by: []` (webhooks are not triggered by the UI). Include these in `endpoints.json` so codegen scaffolds the signature verification.
->
-> Resolve template literals and path params where possible. If a Next.js API route handler already exists, set `existing_handler` to its file path so it's not duplicated. Do not output markdown — only the JSON file.
-
-**Agent 4 — Forms, buttons, auth surface** → writes `.backend-design/state/forms.json`
-
-> Inventory every form, every input, every interactive button (including those inside modals and nested components). Flag every auth-related element: signup, login, logout, password reset, email verification, OAuth, magic link, MFA, account deletion, change password, change email.
->
-> Use these framework-specific search patterns:
->
-> <<PATTERNS>>
->
-> Apply the **Forms** and **Auth hints** sections. Form syntax varies dramatically by framework — JSX `<form onSubmit>`, Vue `<form @submit>`, Svelte `<form on:submit>`, Angular `[formGroup]`, HTMX `<form hx-post>`, Astro `<form action="/api/...">`, etc. Find them all using the patterns above.
->
-> Write JSON to `.backend-design/state/forms.json` with this shape:
->
-> ```json
-> {
->   "forms": [
->     {
->       "id": "NewPostForm",
->       "file": "components/NewPostForm.tsx:12",
->       "purpose": "Create a new post",
->       "multipart": false,
->       "inputs": [
->         {"name": "title", "type": "text", "validation": {"required": true, "minLength": 3, "maxLength": 200}},
->         {"name": "body", "type": "textarea", "validation": {"required": true}},
->         {"name": "cover_image", "type": "file", "accept": "image/*", "validation": {"required": false, "max_size_mb": 5}}
->       ],
->       "submits_to": "POST /api/posts",
->       "on_success": "redirect to /posts/[id]",
->       "evidence": ["components/NewPostForm.tsx:12"]
->     }
->   ],
->   "standalone_buttons": [
->     {
->       "file": "components/PostCard.tsx:42",
->       "label": "Delete",
->       "action": "api_call",
->       "destructive": true,
->       "target": "DELETE /api/posts/:id",
->       "evidence": ["components/PostCard.tsx:42"]
->     }
->   ],
->   "auth_surface": {
->     "signup": {"present": true, "file": "app/signup/page.tsx"},
->     "login": {"present": true, "file": "app/login/page.tsx"},
->     "logout": {"present": true, "trigger": "components/Header.tsx:23"},
->     "password_reset": {"present": false},
->     "email_verification": {"present": false},
->     "oauth_providers": []
->   }
-> }
-> ```
->
-> Action values: `api_call`, `navigate`, `local_state`, `open_modal`. Set `destructive: true` for Delete/Remove/Cancel.
->
-> **File inputs.** For every `<input type="file">` (or `accept` attr, or framework equivalent), set `type: "file"` and capture `accept` (MIME globs) and any size validation. If the form contains any file input, set `multipart: true` at the form level — the endpoint will need to accept `multipart/form-data`. If the form uses `FormData` in JS without an `<input type="file">`, still set `multipart: true` and note the field names.
->
-> Do not output markdown — only the JSON file.
+**Cache-friendly prompt ordering** (do not skip): the prompt template above puts the **stable, shared** `<<PATTERNS_FILE>>` read instruction first, then the per-agent brief, then dynamic config. This ordering lets Anthropic's prompt cache reuse the shared prefix across all four parallel subagents — repeated runs cost a fraction of the first. Preserve this order when editing.
 
 ---
 
@@ -573,7 +407,7 @@ This writes `./backend-design.env.example` at the repo root with every env var t
 
 After Phase 2.5 completes:
 
-1. Print a short summary to the user: entity count, table count, endpoint count, whether auth is included, count of UI elements covered vs. flagged in the coverage check, count of open questions, and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
+1. Read `.backend-design/state/design-summary.json` (emitted by `render-design.mjs` alongside the markdown — ~500 bytes of pre-computed counts) and `.backend-design/gaps.json`. **Do not read `backend-design.md`** — it's for the user, not for the model summary step. Print a short summary to the user using fields from these two files: entity count, table count, endpoint count, whether auth is included (`auth_enabled`), `coverage_check.covered` vs. `coverage_check.flagged`, `open_question_count`, and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
 2. Tell the user: "Three files are ready for review: `./backend-design.md` (the design, including a recommended answer to every open question), `./backend-design-next-steps.md` (env vars, wire-up TODOs, accounts to set up), and `./backend-design.env.example` (copy to `.env` and fill in). Let me know to proceed, or describe any changes."
 3. **Stop.** Do not call any more tools. Wait for the user's next message.
 
@@ -606,17 +440,17 @@ node <SKILL_DIR>/scripts/render-s2ai-schema.mjs
 
 It reads `.backend-design/state/*.json` and writes `./schema.mmd` at the repo root (the chosen `output_dir` is ignored for this stack). No verification commands apply — there is no compile step, no startup smoke test. Report to the user: file path, entity count, relationship count, and how many non-CRUD endpoints were emitted as commented hints. Skip directly to the Phase 4 checkpoint write. The user supplies `@dictionary` regex blocks and the `@service` auth block by hand, then runs s2ai's own `make` pipeline against the file.
 
-Use `Read` to load the relevant prompt file. **If any endpoint in `endpoints.json` has `temporary: true`**, also `Read` `<SKILL_DIR>/prompts/codegen-placeholders.md` and concatenate it ahead of the stack-specific prompt. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and pass the assembled prompt:
+Determine whether placeholders apply: scan `.backend-design/state/endpoints.json` for any endpoint with `temporary: true`. **Do not read the codegen prompt yourself** — pass its path to the subagent and let it read directly. Spawn **one `general-purpose` subagent** with `model: "sonnet"` and the following prompt (substitute the bracketed values):
 
-> The authoritative spec is in `.backend-design/state/*.json`. The user has chosen stack `<config.stack.id>` (<config.stack.label>) with auth strategy `<config.auth.strategy>` and output directory `<config.output_dir>`.
+> The authoritative spec is in `.backend-design/state/*.json`. Stack: `<config.stack.id>` (<config.stack.label>), auth strategy: `<config.auth.strategy>`, output directory: `<config.output_dir>`.
 >
-> Use this brief:
+> Read `<SKILL_DIR>/prompts/codegen-<config.stack.id>.md` for your scaffolding brief and follow it exactly. After scaffolding, run the **verification commands** listed at the bottom of that file (Node stacks: `<PM> install`, ORM generate, `<PM> tsc --noEmit`; Python: `pip install -e .`, `alembic check`, import smoke). Report any failures.
 >
-> <pasted contents of codegen-placeholders.md, only if any endpoint has temporary: true>
+> When done, output the exact "README run commands" section verbatim from the codegen brief — the orchestrator forwards it to the user.
 >
-> <pasted contents of the codegen-*.md file>
+> [Include this line ONLY when any endpoint has `temporary: true`:] Also read `<SKILL_DIR>/prompts/codegen-placeholders.md` — it overrides the brief for endpoints marked `temporary: true` (scaffold them as 501 stubs, strip auth, leave bodies empty).
 
-After the agent finishes, run the **stack-specific verification commands** listed at the bottom of the codegen prompt file. For Node stacks: `<PM> install`, ORM-specific generate command, `<PM> tsc --noEmit`. For Python: `pip install -e .` (or `uv pip install -e .`), `alembic check`, import smoke test.
+This keeps the codegen prompt content (6–9 KB) out of the orchestrator's context — the subagent reads, scaffolds, verifies, and reports back the run commands.
 
 **Startup smoke test (Node stacks).** After the static checks pass, run a startup smoke test to catch errors that `tsc` doesn't see (missing env vars, plugin order, runtime imports):
 
@@ -647,7 +481,7 @@ Do not declare the task complete until verification passes.
 
 **Checkpoint write** (end of Phase 4): merge `{ phase_4_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
-Then report to the user: stack used, output directory, entity count, endpoint count, and the next-step command from the codegen prompt's "README run commands" section.
+Then report to the user: stack used, output directory, entity count, endpoint count, and the run commands the subagent reported back from the codegen brief's "README run commands" section.
 
 ---
 

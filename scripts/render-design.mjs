@@ -16,6 +16,49 @@ const STATE_FILES = [
   "open_questions.json",
 ];
 
+export function summarizeDesign(cwd = process.cwd()) {
+  const state = loadState(cwd);
+  const allEndpoints = state.endpoints ?? [];
+  const internalEndpoints = allEndpoints.filter((e) => !e.is_external);
+  const externalEndpoints = allEndpoints.filter((e) => e.is_external);
+  const placeholderEndpoints = allEndpoints.filter((e) => e.temporary);
+  const auth = state.auth ?? null;
+
+  const epKeys = new Set(
+    internalEndpoints.filter((e) => e.method && e.path).map((e) => `${e.method.toUpperCase()} ${e.path}`)
+  );
+  let covered = 0;
+  let flagged = 0;
+  for (const s of state.screens ?? []) {
+    for (const f of s.data_fetches ?? []) {
+      const key = `${(f.method ?? "GET").toUpperCase()} ${f.url ?? ""}`;
+      if (epKeys.has(key)) covered++;
+      else flagged++;
+    }
+  }
+  const unwiredButtons = (state.forms?.standalone_buttons ?? []).filter((b) => {
+    if (b.action !== "api_call") return false;
+    if (!b.target) return true;
+    const [method, ...rest] = b.target.split(" ");
+    return !epKeys.has(`${(method ?? "").toUpperCase()} ${rest.join(" ")}`);
+  }).length;
+
+  return {
+    entity_count: (state.entities ?? []).length,
+    table_count: (state.entities ?? []).length,
+    endpoint_count: internalEndpoints.length,
+    external_endpoint_count: externalEndpoints.length,
+    placeholder_count: placeholderEndpoints.length,
+    webhook_count: allEndpoints.filter((e) => e.is_webhook).length,
+    screen_count: (state.screens ?? []).length,
+    relationship_count: (state.relationships ?? []).length,
+    auth_enabled: !!(auth && auth.strategy && auth.strategy !== "none"),
+    auth_strategy: auth?.strategy ?? null,
+    open_question_count: Array.isArray(state.open_questions) ? state.open_questions.length : 0,
+    coverage_check: { covered, flagged, unwired_buttons: unwiredButtons },
+  };
+}
+
 export function renderDesign(cwd = process.cwd()) {
   const state = loadState(cwd);
   const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
@@ -345,6 +388,11 @@ function snake(name) {
 export function runRender(cwd = process.cwd()) {
   const out = renderDesign(cwd);
   writeFileSync(join(cwd, "backend-design.md"), out.endsWith("\n") ? out : out + "\n");
+  const summary = summarizeDesign(cwd);
+  writeFileSync(
+    join(cwd, ".backend-design", "state", "design-summary.json"),
+    JSON.stringify(summary, null, 2) + "\n"
+  );
   return out;
 }
 
