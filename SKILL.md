@@ -22,7 +22,7 @@ The stack is **not fixed** — it's selected by the user via `npx backend-design
 
 ## Workflow
 
-Execute **4 phases in order**. Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
+Execute the phases in order: Pre-flight → Phase 1 (inventory) → Phase 2 (synthesis) → Phase 2.5 (gap detection) → Phase 2.6 (skeptic pass) → Phase 3 (review gate) → Phase 4 (codegen). Phase 3 is a hard stop — do not start Phase 4 until the user approves the design doc.
 
 All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 synthesis agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them by `scripts/render-design.mjs`; the codegen agent in Phase 4 reads them directly.
 
@@ -47,7 +47,8 @@ Run **before** the pre-flight check. Decides whether to start fresh or skip ahea
    | `fresh` | No prior state. Proceed to Pre-flight → Phase 1. |
    | `resume_phase_2` | Phase 1 inventory is on disk and frontend unchanged. Skip Phase 1; proceed to Phase 2. |
    | `resume_phase_2_5` | Phase 2 synthesis on disk. Skip Phases 1+2; run `node <SKILL_DIR>/scripts/render-design.mjs` to regenerate `backend-design.md` from existing state, then proceed to Phase 2.5. Never hand-render — the script is the source of truth. |
-   | `resume_phase_3` | Design and next-steps docs exist. Skip everything except the Phase 3 review gate — print the summary and wait for approval. |
+   | `resume_phase_2_6` | Phase 2.5 gap detection on disk but skeptic pass not yet run. Skip Phases 1+2+2.5; proceed directly to Phase 2.6 (skeptic pass), then re-render the design doc, then Phase 3. |
+   | `resume_phase_3` | Design, next-steps doc, and skeptic findings exist. Skip everything except the Phase 3 review gate — print the summary and wait for approval. |
    | `resume_phase_4` | Design approved but scaffold not generated. Skip to Phase 4 directly. |
    | `gaps_only` | Scaffold complete, frontend unchanged. Run `node <SKILL_DIR>/scripts/detect-gaps.mjs` followed by `node <SKILL_DIR>/scripts/render-env-example.mjs` to refresh both `./backend-design-next-steps.md` and `./backend-design.env.example`. Report and stop — do not re-scaffold or re-render the design doc. |
    | `fresh_with_gaps_preserved` | Frontend changed since the last run. Re-run from Phase 1. **Preserve** `.backend-design/gaps.json` so closure detection still works on this run. |
@@ -61,6 +62,7 @@ After each subsequent phase succeeds, **update the checkpoint** via `Read` + `Wr
 | 1 | `phase_1_at: <ISO-8601 now>`, `frontend_signature: <output of `node <SKILL_DIR>/scripts/checkpoint.mjs signature`>` |
 | 2 | `phase_2_at: <now>` |
 | 2.5 | `phase_2_5_at: <now>` |
+| 2.6 | `phase_2_6_at: <now>` |
 | 3 (user approves) | `design_approved_at: <now>` |
 | 4 (verification passes) | `phase_4_at: <now>` |
 
@@ -403,11 +405,31 @@ This writes `./backend-design.env.example` at the repo root with every env var t
 
 ---
 
+### Phase 2.6 — Skeptic pass
+
+Spawn **one `general-purpose` subagent** with `model: "sonnet"`. This agent re-reads the synthesized design from an adversarial stance and surfaces concrete-pattern concerns as additional Open Questions. It runs after gap detection so it can also see `gaps.json`. It does NOT pause for input — the user sees its findings in the design doc at the Phase 3 review gate.
+
+Spawn it with this prompt (do NOT read the brief yourself — the subagent reads it directly, keeping the orchestrator's context lean):
+
+> Read `<SKILL_DIR>/prompts/skeptic.md` for your full brief and output schema. Then run the skeptic pass against `.backend-design/state/*.json`, `.backend-design/config.json`, and `.backend-design/gaps.json`. Write your augmented array to `.backend-design/state/open_questions.json` and your raw findings to `.backend-design/state/skeptic_findings.json`. Cap output at 8 questions.
+
+After the skeptic agent finishes:
+
+1. Re-run the validator (`node <SKILL_DIR>/validate.mjs`) to ensure the appended questions are well-formed.
+2. Re-render the design doc so the new findings appear in the Open Questions section: `node <SKILL_DIR>/scripts/render-design.mjs`.
+3. Report a one-line summary to the user: `Skeptic pass: <N> finding(s) — see Open Questions in backend-design.md.`
+
+If the skeptic agent writes zero findings, that's a valid outcome — small or simple designs frequently have nothing concrete to flag. Don't re-spawn to "find something."
+
+**Checkpoint write** (end of Phase 2.6): merge `{ phase_2_6_at: <ISO now> }` into `.backend-design/checkpoint.json`.
+
+---
+
 ### Phase 3 — Review gate (do not skip)
 
 After Phase 2.5 completes:
 
-1. Read `.backend-design/state/design-summary.json` (emitted by `render-design.mjs` alongside the markdown — ~500 bytes of pre-computed counts) and `.backend-design/gaps.json`. **Do not read `backend-design.md`** — it's for the user, not for the model summary step. Print a short summary to the user using fields from these two files: entity count, table count, endpoint count, whether auth is included (`auth_enabled`), `coverage_check.covered` vs. `coverage_check.flagged`, `open_question_count`, and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
+1. Read `.backend-design/state/design-summary.json` (emitted by `render-design.mjs` alongside the markdown — ~500 bytes of pre-computed counts) and `.backend-design/gaps.json`. **Do not read `backend-design.md`** — it's for the user, not for the model summary step. Print a short summary to the user using fields from these two files: entity count, table count, endpoint count, whether auth is included (`auth_enabled`), `coverage_check.covered` vs. `coverage_check.flagged`, `open_question_count` (split as `<X> product-intent · <Y> skeptic-pass` using `skeptic_count` from the same summary file), and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
 2. Tell the user: "Three files are ready for review: `./backend-design.md` (the design, including a recommended answer to every open question), `./backend-design-next-steps.md` (env vars, wire-up TODOs, accounts to set up), and `./backend-design.env.example` (copy to `.env` and fill in). Let me know to proceed, or describe any changes."
 3. **Stop.** Do not call any more tools. Wait for the user's next message.
 
@@ -444,7 +466,7 @@ Determine whether placeholders apply: scan `.backend-design/state/endpoints.json
 
 > The authoritative spec is in `.backend-design/state/*.json`. Stack: `<config.stack.id>` (<config.stack.label>), auth strategy: `<config.auth.strategy>`, output directory: `<config.output_dir>`.
 >
-> Read `<SKILL_DIR>/prompts/codegen-<config.stack.id>.md` for your scaffolding brief and follow it exactly. After scaffolding, run the **verification commands** listed at the bottom of that file (Node stacks: `<PM> install`, ORM generate, `<PM> tsc --noEmit`; Python: `pip install -e .`, `alembic check`, import smoke). Report any failures.
+> Read `<SKILL_DIR>/prompts/codegen-<config.stack.id>.md` for your scaffolding brief and follow it exactly. The brief now includes a `## Tests (required)` section and a `## Security baseline` section — implement both. After scaffolding, run the **verification commands** listed at the bottom of that file (Node stacks: `<PM> install`, ORM generate, `<PM> tsc --noEmit`, `<PM> test`; Python: `pip install -e .`, `alembic check`, import smoke, `pytest`). Tests run against a real ephemeral Postgres via testcontainers — Docker must be running on the host. If Docker is not available, report it and skip the test step rather than failing the whole verification. Report any other failures.
 >
 > When done, output the exact "README run commands" section verbatim from the codegen brief — the orchestrator forwards it to the user.
 >

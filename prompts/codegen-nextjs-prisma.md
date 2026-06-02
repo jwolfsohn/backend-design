@@ -85,16 +85,59 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 
 Collapse same-path different-method endpoints into one `route.ts` file with multiple exported functions.
 
+## Security baseline (required)
+
+Add `middleware.ts` at the project root (Next.js convention) that:
+
+- Validates the `Origin` header against `process.env.ALLOWED_ORIGINS` (comma-separated allowlist). Reject mismatched origins on non-GET requests with `new NextResponse(null, { status: 403 })`. Default to `["http://localhost:3000"]` when unset.
+- Applies a rate limiter. If `process.env.UPSTASH_REDIS_URL` is set, use `@upstash/ratelimit` with `slidingWindow(Number(process.env.RATE_LIMIT_MAX ?? 1000), "15 m")` and a tighter window for write methods. Otherwise fall back to a small in-memory `Map<ip, { count, resetAt }>` limiter scoped to the same numbers — leave a `// TODO: swap for @upstash/ratelimit on Vercel; in-memory limiter resets per cold start` comment.
+- Configures the `matcher` to only run on `/api/:path*`.
+
+Add `lib/security.ts` exporting `securityHeaders()` returning a `Headers` object with CSP (`default-src 'self'`), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`. Every API route handler calls `Object.assign(response.headers, securityHeaders())` before returning, or uses `Response.json(data, { status, headers: securityHeaders() })`.
+
+Startup guard in `lib/db.ts` or `middleware.ts`: if `process.env.NODE_ENV === "production"` and `ALLOWED_ORIGINS` is missing or contains `*`, throw at module load — Next.js will surface it at boot.
+
+Dev deps to add: `@upstash/ratelimit` (optional, gated on the env var).
+
+Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`, `UPSTASH_REDIS_URL`) in `.env.example` (or `.env.example.add` per the existing file-preservation rule).
+
+Logging: use the platform default (Next.js / Vercel auto-collects stdout). Document `LOG_LEVEL` in `BACKEND_SETUP.md` even though there's no logger library — handlers should `console.log({ level, msg, ...ctx })` in JSON so log aggregators can parse.
+
+## Tests (required)
+
+Generate a `tests/` directory with vitest + `@testcontainers/postgresql`. Test the route handlers directly — Next.js route files export pure functions (`GET`, `POST`, `PATCH`, `DELETE`) that take a `Request` and return a `Response`, so there's no HTTP layer to mock.
+
+Add to dev deps: `vitest`, `@testcontainers/postgresql`.
+
+Add to `package.json` scripts:
+
+```json
+"test": "vitest run",
+"test:watch": "vitest"
+```
+
+Files:
+
+- **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`.
+- **`tests/setup.ts`** — starts `PostgreSqlContainer`, sets `process.env.DATABASE_URL`, runs `npx prisma migrate deploy`. Also sets `process.env.JWT_SECRET = "test-secret"` so `lib/auth.ts` works.
+- **`tests/helpers.ts`** — exports `prisma`, `truncateAll()`, and `signupAndLogin()` that imports `POST` from `app/api/auth/signup/route.ts` and `app/api/auth/login/route.ts`, invokes them with a `new Request(...)`, and returns `{ user, token }`.
+- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Import the auth route handlers directly, invoke with `new Request("http://test/api/auth/signup", { method: "POST", body: JSON.stringify({ email, password }), headers: { "content-type": "application/json" } })`. Assert response shape.
+- **`tests/<resource>.test.ts`** — one per non-auth resource. Import the route handlers, invoke with hand-built `Request` objects. For routes with `[id]`, pass the `{ params: { id } }` second argument: `await GET(req, { params: Promise.resolve({ id: "..." }) })` (Next.js 15+ async params).
+- `beforeEach(truncateAll)`.
+
+Skip tests for placeholder routes and webhook routes.
+
 ## README run commands (write to `BACKEND_SETUP.md` since `README.md` already exists)
 
 Use `config.pkg_manager` (`<PM>`) from `.backend-design/config.json` — default `pnpm`.
 
 ```
 <PM> install prisma @prisma/client bcryptjs jose zod
-<PM> install -D @types/bcryptjs
+<PM> install -D @types/bcryptjs vitest @testcontainers/postgresql
 cp .env.example .env   # ensure DATABASE_URL and JWT_SECRET are set
 <PM> prisma migrate dev --name init
-<PM> dev   # already wired
+<PM> dev               # already wired
+<PM> test              # runs the suite against a testcontainer Postgres (needs Docker)
 ```
 
 ## Verification
@@ -102,3 +145,4 @@ cp .env.example .env   # ensure DATABASE_URL and JWT_SECRET are set
 1. `<PM> install` succeeds
 2. `<PM> prisma generate` succeeds
 3. `<PM> tsc --noEmit` passes (the Next.js project's own tsconfig)
+4. `<PM> test` passes (skip with "Docker not running" note if `docker info` fails)

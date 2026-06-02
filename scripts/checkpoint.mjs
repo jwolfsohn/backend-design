@@ -147,8 +147,11 @@ export function decide(cwd = process.cwd()) {
   if (cp.design_approved_at) {
     return { action: "resume_phase_4", reason: "Design approved but scaffold not yet generated. Resuming at Phase 4.", next_phase: 4 };
   }
+  if (cp.phase_2_6_at) {
+    return { action: "resume_phase_3", reason: "Skeptic pass complete. Resuming at Phase 3 review gate.", next_phase: 3 };
+  }
   if (cp.phase_2_5_at) {
-    return { action: "resume_phase_3", reason: "Design and next-steps doc exist. Resuming at Phase 3 review gate.", next_phase: 3 };
+    return { action: "resume_phase_2_6", reason: "Gap detection complete; skeptic pass not yet run. Resuming at Phase 2.6.", next_phase: 2.6 };
   }
   if (cp.phase_2_at) {
     return { action: "resume_phase_2_5", reason: "Synthesis complete. Resuming at Phase 2.5 gap detection.", next_phase: 2.5 };
@@ -173,6 +176,7 @@ export function printStatus(cwd = process.cwd()) {
   console.log(`  ${mark(cp.phase_1_at)} Phase 1   inventory       ${fmt(cp.phase_1_at)}`);
   console.log(`  ${mark(cp.phase_2_at)} Phase 2   synthesis       ${fmt(cp.phase_2_at)}`);
   console.log(`  ${mark(cp.phase_2_5_at)} Phase 2.5 gap detection  ${fmt(cp.phase_2_5_at)}`);
+  console.log(`  ${mark(cp.phase_2_6_at)} Phase 2.6 skeptic pass   ${fmt(cp.phase_2_6_at)}`);
   console.log(`  ${mark(cp.design_approved_at)} Phase 3   approved        ${fmt(cp.design_approved_at)}`);
   console.log(`  ${mark(cp.phase_4_at)} Phase 4   scaffold        ${fmt(cp.phase_4_at)}`);
   console.log();
@@ -195,6 +199,14 @@ export function printStatus(cwd = process.cwd()) {
     const w = open.filter((g) => g.severity === "warning").length;
     const i = open.filter((g) => g.severity === "info").length;
     console.log(`Open gaps: ${b} blocker(s) · ${w} wire-up(s) · ${i} info`);
+    console.log();
+  }
+
+  const questions = loadJson(join(cwd, ".backend-design", "state", "open_questions.json"));
+  if (Array.isArray(questions) && questions.length) {
+    const skeptic = questions.filter((q) => q?.category === "skeptic").length;
+    const product = questions.length - skeptic;
+    console.log(`Open questions: ${product} product-intent · ${skeptic} skeptic-pass`);
     console.log();
   }
 

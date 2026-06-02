@@ -86,6 +86,44 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 | `boolean`          | `Mapped[bool] = mapped_column(Boolean)` |
 | `timestamptz`      | `Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())` |
 
+## Security baseline (required)
+
+In `app/main.py`, register these middlewares (order matters — CORS first, then rate limit, then security headers):
+
+- `CORSMiddleware` from `fastapi.middleware.cors` with `allow_origins` parsed from `os.environ["ALLOWED_ORIGINS"].split(",")` (default `["http://localhost:3000"]`). `allow_credentials=True`. Set `allow_methods` and `allow_headers` to `["*"]`.
+- `slowapi` rate limit: `from slowapi import Limiter, _rate_limit_exceeded_handler` and `from slowapi.util import get_remote_address`. Set `app.state.limiter = Limiter(key_func=get_remote_address, default_limits=[f"{os.environ.get('RATE_LIMIT_MAX', '1000')}/15 minutes"])`. Add `@limiter.limit(f"{os.environ.get('RATE_LIMIT_WRITE_MAX', '100')}/15 minutes")` decorator on every POST/PATCH/PUT/DELETE route.
+- A `SecurityHeadersMiddleware` (custom, ~10 lines) that adds `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, `Strict-Transport-Security: max-age=31536000; includeSubDomains`, `X-Frame-Options: DENY`.
+
+Configure `structlog` in `app/lib/logging.py`: JSON renderer when `os.environ.get("LOG_LEVEL")` matches production-shaped values, console renderer in dev. Set log level from `LOG_LEVEL` (default `INFO`). Replace any `print()` calls in scaffolded code with `structlog` logger calls.
+
+Startup event in `app/main.py`: if `os.environ.get("NODE_ENV") == "production"` (or `ENV == "production"` — adopt whichever is set in the project) and `ALLOWED_ORIGINS` is unset or contains `*`, raise `RuntimeError` at startup. Same for missing `JWT_SECRET` under JWT auth.
+
+Add to `pyproject.toml` deps: `slowapi`, `structlog`. Remove `passlib` if previously listed (the existing brief already favors `bcrypt` directly).
+
+Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`.
+
+## Tests (required)
+
+Generate a `tests/` directory with pytest + httpx + `testcontainers[postgres]`.
+
+Add to `pyproject.toml` dev dependencies: `pytest`, `pytest-asyncio`, `httpx`, `testcontainers[postgres]`.
+
+Add a `pytest.ini`:
+
+```ini
+[pytest]
+asyncio_mode = auto
+testpaths = tests
+```
+
+Files:
+
+- **`tests/conftest.py`** — `@pytest.fixture(scope="session")` that spins up a `PostgresContainer`, points `os.environ["DATABASE_URL"]` at it, runs `alembic upgrade head` via `subprocess.run(["alembic", "upgrade", "head"], check=True)`, and yields. Plus a function-scope `truncate` fixture that issues `TRUNCATE TABLE ... CASCADE` for every table after each test. Plus a `client` fixture yielding `TestClient(app)` from `fastapi.testclient`. Plus a `user_and_token` fixture that signs up a fixture user and returns `(user, token, {"Authorization": f"Bearer {token}"})`.
+- **`tests/test_auth.py`** — only when `auth.json.strategy === "jwt"`. Signup → 201, login → 200 with token, protected route without token → 401, with valid token → 200.
+- **`tests/test_<resource>.py`** — one per non-auth resource. List empty → `[]`, POST → 201 with `version: 1`, PATCH with `If-Match: 1` → 200 with `version: 2`, PATCH with stale `If-Match` → 409 with `current_version`, DELETE → 204, soft-deleted row excluded from subsequent list.
+
+Skip tests for placeholder routes and webhook routes.
+
 ## README run commands
 
 ```
@@ -94,6 +132,7 @@ uv pip install -e .
 cp .env.example .env             # fill in DATABASE_URL and JWT_SECRET
 alembic upgrade head             # apply migrations
 uvicorn app.main:app --reload
+pytest                            # runs the suite against a testcontainer Postgres (needs Docker)
 ```
 
 ## Verification
@@ -101,3 +140,4 @@ uvicorn app.main:app --reload
 1. `uv pip install -e .` succeeds (or `pip install -e .`)
 2. `alembic check` runs without import errors
 3. `python -c "from app.main import app"` imports cleanly (catches model and router import errors)
+4. `pytest` passes (skip with "Docker not running" note if `docker info` fails)

@@ -79,6 +79,45 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 - **Placeholder routes (`temporary: true`)** never touch the DB — soft delete, version, and audit columns are irrelevant there.
 - **Webhook routes** (`is_webhook: true`) typically have no `req.user`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
 
+## Security baseline (required)
+
+Generate `src/security.ts` that exports a `applySecurity(app)` function called from `src/index.ts` immediately after `express.json()` registration (but BEFORE route mounting). It must:
+
+- Apply `helmet()` with default headers.
+- Apply `cors({ origin: parseAllowedOrigins(), credentials: true })` where `parseAllowedOrigins()` reads `process.env.ALLOWED_ORIGINS` as a comma-separated allowlist. Default to `["http://localhost:3000"]` when unset.
+- Apply two `express-rate-limit` instances: a global limiter capped at `Number(process.env.RATE_LIMIT_MAX ?? 1000)` per 15 minutes, plus a stricter `writeLimiter` capped at `Number(process.env.RATE_LIMIT_WRITE_MAX ?? 100)` per 15 minutes that is applied per-route only to handlers with `method` in `{POST, PATCH, PUT, DELETE}`. Export `writeLimiter` so route files can attach it.
+- Wire `pino-http` with `level: process.env.LOG_LEVEL ?? "info"` and `redact: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"]`. In dev (`NODE_ENV !== "production"`), use `pino-pretty` as the transport.
+
+Add a startup guard in `src/index.ts`: if `process.env.NODE_ENV === "production"` and `ALLOWED_ORIGINS` is missing or contains `*`, `console.error` the reason and `process.exit(1)`. Do the same if `JWT_SECRET` is missing under JWT auth — production must fail fast, not boot with insecure defaults.
+
+Dev deps: `helmet`, `express-rate-limit`, `cors`, `pino`, `pino-http`, `pino-pretty`.
+
+Document the new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`. The `render-env-example.mjs` script already covers them at the project level; the `.env.example` you write inside the generated backend should include the same vars with the same comments.
+
+## Tests (required)
+
+Generate a `tests/` directory with vitest + supertest + a real ephemeral Postgres via `@testcontainers/postgresql`. The point is to prove the scaffold works against a real DB, not just compile.
+
+Add to dev deps: `vitest`, `supertest`, `@types/supertest`, `@testcontainers/postgresql`.
+
+Add to `package.json` scripts:
+
+```json
+"test": "vitest run",
+"test:watch": "vitest"
+```
+
+Files:
+
+- **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`. Single fork avoids two containers racing for migrations.
+- **`tests/setup.ts`** — `globalSetup` hook: starts a `PostgreSqlContainer`, exports `process.env.DATABASE_URL = container.getConnectionUri()`, runs `npx prisma migrate deploy` against it via `execSync`, returns a teardown that stops the container.
+- **`tests/helpers.ts`** — exports `prisma` (a fresh `PrismaClient`), `app` (the Express app, importable for supertest), `truncateAll()` that issues `TRUNCATE TABLE <each table> RESTART IDENTITY CASCADE` (loop over `Object.keys(prisma)` for model names — Prisma provides a `_models` introspection on the client), and `createUserAndLogin()` which signs up a fixture user and returns `{ user, token, headers: { Authorization: 'Bearer ' + token } }`.
+- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Tests: signup returns 201 with a token; login returns 200 with a token; missing/invalid token → 401 on any protected route; valid token → 200.
+- **`tests/<resource>.test.ts`** — one per non-auth scaffolded resource. For each: list returns `[]` initially; POST creates a row, returns 201 with `version: 1` and (when auth is on) `created_by === user.id`; PATCH with `If-Match: 1` increments to 2 and returns the new value; PATCH again with `If-Match: 1` returns 409 with `current_version`; DELETE returns 204; subsequent list excludes the deleted row.
+- Each test file `beforeEach(truncateAll)` for full isolation.
+
+Skip writing tests for placeholder routes (`temporary: true`) and webhook routes — they require either mocking 501 responses (low value) or fixture-signed webhook payloads (out of scope).
+
 ## README run commands
 
 ```
@@ -86,6 +125,7 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
 <PM> prisma migrate dev --name init
 <PM> dev
+<PM> test              # runs the suite against a testcontainer Postgres (needs Docker)
 ```
 
 ## Verification (you run after generation)
@@ -93,3 +133,4 @@ cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
 1. `<PM> install` succeeds
 2. `<PM> prisma generate` succeeds (no live DB needed)
 3. `<PM> tsc --noEmit` passes
+4. `<PM> test` passes (skip with a clear "Docker not running" note if `docker info` fails — do NOT mark the run failed in that case)

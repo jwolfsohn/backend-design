@@ -66,6 +66,45 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 - **Placeholder routes (`temporary: true`)** never touch the DB.
 - **Webhook routes** typically have no `request.user`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
 
+## Security baseline (required)
+
+Register these plugins from `src/index.ts` (after `@fastify/cors`, before route mounts):
+
+- `@fastify/helmet` with default config.
+- `@fastify/rate-limit` with `max: Number(process.env.RATE_LIMIT_MAX ?? 1000)`, `timeWindow: "15 minutes"`. Apply a per-route override on POST/PATCH/PUT/DELETE handlers via `config.rateLimit = { max: Number(process.env.RATE_LIMIT_WRITE_MAX ?? 100) }`.
+- `@fastify/cors` configured with `origin` derived from `process.env.ALLOWED_ORIGINS` (comma-separated allowlist). Default to `["http://localhost:3000"]` when unset.
+- Fastify's built-in pino logger: set `logger: { level: process.env.LOG_LEVEL ?? "info", redact: ["req.headers.authorization", "req.headers.cookie", "res.headers['set-cookie']"] }` in the Fastify constructor. In dev (`NODE_ENV !== "production"`), use `transport: { target: "pino-pretty" }`.
+
+Startup guard in `src/index.ts`: if `process.env.NODE_ENV === "production"` and `ALLOWED_ORIGINS` is missing or contains `*`, `console.error` and `process.exit(1)`. Same for missing `JWT_SECRET` under JWT auth.
+
+Dev deps: `@fastify/helmet`, `@fastify/rate-limit`, `@fastify/cors`, `pino-pretty`.
+
+Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`.
+
+## Tests (required)
+
+Generate a `tests/` directory with vitest + `@testcontainers/postgresql`. Use Fastify's `app.inject({ method, url, headers, payload })` instead of supertest — it's faster and avoids opening sockets.
+
+Add to dev deps: `vitest`, `@testcontainers/postgresql`.
+
+Add to `package.json` scripts:
+
+```json
+"test": "vitest run",
+"test:watch": "vitest"
+```
+
+Files:
+
+- **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`.
+- **`tests/setup.ts`** — starts `PostgreSqlContainer`, sets `process.env.DATABASE_URL`, runs `npx prisma migrate deploy`, returns teardown.
+- **`tests/helpers.ts`** — exports `buildApp()` (factory returning a fresh Fastify instance built the same way as `src/index.ts`), `prisma`, `truncateAll()`, and `createUserAndLogin(app)` that calls `app.inject({ method: "POST", url: "/auth/signup", ... })` and returns `{ user, token, headers }`.
+- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Same shape as the Express stack.
+- **`tests/<resource>.test.ts`** — one per non-auth scaffolded resource. Use `app.inject` for every request. Cover: list-empty, create with `version: 1`, PATCH with `If-Match: 1` → 2, stale `If-Match` → 409, DELETE → 204, soft-delete excluded from subsequent list.
+- `beforeEach(truncateAll)` for isolation.
+
+Skip tests for placeholder routes and webhook routes.
+
 ## README run commands
 
 ```
@@ -73,6 +112,7 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
 <PM> prisma migrate dev --name init
 <PM> dev
+<PM> test              # runs the suite against a testcontainer Postgres (needs Docker)
 ```
 
 ## Verification
@@ -80,3 +120,4 @@ cp .env.example .env   # fill in DATABASE_URL and JWT_SECRET
 1. `<PM> install` succeeds
 2. `<PM> prisma generate` succeeds
 3. `<PM> tsc --noEmit` passes
+4. `<PM> test` passes (skip with "Docker not running" note if `docker info` fails)

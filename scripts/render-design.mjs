@@ -43,6 +43,8 @@ export function summarizeDesign(cwd = process.cwd()) {
     return !epKeys.has(`${(method ?? "").toUpperCase()} ${rest.join(" ")}`);
   }).length;
 
+  const questions = Array.isArray(state.open_questions) ? state.open_questions : [];
+  const skepticCount = questions.filter((q) => q?.category === "skeptic").length;
   return {
     entity_count: (state.entities ?? []).length,
     table_count: (state.entities ?? []).length,
@@ -54,7 +56,9 @@ export function summarizeDesign(cwd = process.cwd()) {
     relationship_count: (state.relationships ?? []).length,
     auth_enabled: !!(auth && auth.strategy && auth.strategy !== "none"),
     auth_strategy: auth?.strategy ?? null,
-    open_question_count: Array.isArray(state.open_questions) ? state.open_questions.length : 0,
+    open_question_count: questions.length,
+    skeptic_count: skepticCount,
+    product_question_count: questions.length - skepticCount,
     coverage_check: { covered, flagged, unwired_buttons: unwiredButtons },
   };
 }
@@ -315,13 +319,23 @@ function openQuestions(state) {
   out.push("These are product-intent ambiguities for **you** to resolve before approving the design. Environmental and wire-up gaps live in [backend-design-next-steps.md](backend-design-next-steps.md).", "");
 
   if (richQuestions.length) {
-    for (const q of richQuestions) {
-      const title = q.title ?? q.id ?? "Question";
-      out.push(`### ${title}`, "");
-      if (q.question) out.push(q.question, "");
-      if (q.context) out.push(`_Context:_ ${q.context}`, "");
-      if (q.recommendation) out.push(`**Recommendation:** ${q.recommendation}`, "");
-      if (q.evidence?.length) out.push(`_Evidence: ${q.evidence.join(", ")}_`, "");
+    const productQs = richQuestions.filter((q) => q?.category !== "skeptic");
+    const skepticQs = richQuestions.filter((q) => q?.category === "skeptic");
+
+    for (const q of productQs) renderQuestion(out, q);
+
+    if (skepticQs.length) {
+      out.push("### Skeptic-pass findings", "");
+      out.push("Adversarial review surfaced these concrete concerns. They are not blockers — each has a recommendation; accept or reject per finding.", "");
+      const byAxis = new Map();
+      for (const q of skepticQs) {
+        const axis = q.axis ?? "other";
+        if (!byAxis.has(axis)) byAxis.set(axis, []);
+        byAxis.get(axis).push(q);
+      }
+      for (const [axis, qs] of [...byAxis.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+        for (const q of qs) renderQuestion(out, q, axis);
+      }
     }
     return out;
   }
@@ -337,6 +351,16 @@ function openQuestions(state) {
     out.push(`**Recommendation:** ${h.recommendation}`, "");
   }
   return out;
+}
+
+function renderQuestion(out, q, axisLabel = null) {
+  const title = q.title ?? q.id ?? "Question";
+  const heading = axisLabel ? `#### [${axisLabel}] ${title}` : `### ${title}`;
+  out.push(heading, "");
+  if (q.question) out.push(q.question, "");
+  if (q.context) out.push(`_Context:_ ${q.context}`, "");
+  if (q.recommendation) out.push(`**Recommendation:** ${q.recommendation}`, "");
+  if (q.evidence?.length) out.push(`_Evidence: ${q.evidence.join(", ")}_`, "");
 }
 
 function heuristicQuestions(state) {

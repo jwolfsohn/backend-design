@@ -2,6 +2,14 @@
 
 A [Claude Code](https://claude.com/claude-code) skill that reads an existing frontend in any modern web framework and scaffolds a matching backend in the stack of your choice.
 
+> See [CHANGELOG.md](CHANGELOG.md) for release notes.
+
+## Demo
+
+![backend-design demo](docs/demo.gif)
+
+_Start in a frontend project → pick a stack → review the design → scaffolded backend with tests + security middleware boots in one command._
+
 ## Supported frontends
 
 Auto-detected via `package.json` and a couple of key files — no full-codebase scan needed:
@@ -28,8 +36,9 @@ Each framework has dedicated search patterns in `prompts/frontend-patterns.md` s
 2. **Synthesizes** entities, relationships, endpoints, an auth model, and a list of open product-intent questions **each with a recommended answer** — so you have a default to accept rather than an open prompt to stare at. Auth is auto-scaffolded when implied (auth-gated screens, token-shaped storage keys, bearer headers, or `/api/auth/*` fetches — not just when a login form exists). Every entity gets best-practice columns by default: `deleted_at` (soft delete), `version` (optimistic lock), and `created_by`/`updated_by` (audit FKs). Domain-shape patterns (e-commerce, chat, social, booking, CMS) are surfaced as Open Questions with recommended entities, never silently added.
 3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
 4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets, per-source webhook secrets, email provider keys, `UPLOADS_DIR`), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions and a copy-pasteable `backend-design.env.example` at the repo root.
-5. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
-6. **Scaffolds** a runnable backend in your chosen stack once you approve.
+5. **Skeptic pass** — a single adversarial Sonnet agent re-reads the design and surfaces concrete-pattern concerns (IDOR-shaped path params with no scoping, list endpoints with no matching index, unbounded webhook handlers, missing health endpoints, PII exposure) as additional Open Questions tagged `category: "skeptic"`. Capped at 8 findings per run.
+6. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
+7. **Scaffolds** a runnable backend in your chosen stack once you approve — every generated stack ships with vitest/pytest tests against a real ephemeral Postgres (via testcontainers) plus a security baseline: helmet/secure-headers, tighter rate limits on writes, CORS allowlist that refuses `*` in production, structured request logging.
 
 On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
 
@@ -47,6 +56,16 @@ You pick one when you run `npx backend-design start`:
 | **s2ai schema only** | Emit a Mermaid `schema.mmd` for s2ai. No server scaffolded — you run s2ai yourself. |
 
 Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions are not yet implemented in any of the codegen prompts — pick JWT or scaffold sessions yourself afterwards.)
+
+## Design choices (and why)
+
+- **Postgres only.** Strong FKs, mature JSON support, the widest hosting story (RDS / Neon / Supabase / Railway / fly.io). Adding MySQL / SQLite / SQL Server means a parallel codegen prompt per stack — happy to take PRs.
+- **No NoSQL.** The skill infers entities + relationships from the UI, which assumes a relational target. Mongo / DynamoDB would need entirely different inference (denormalize for access patterns) and is out of scope.
+- **JSON state in `.backend-design/state/`, not YAML or one big file.** Each phase writes one file → diffable in code review, scriptable, parallel-safe. `render-design.mjs` is the only thing that produces the human-readable Markdown.
+- **Five stacks, not fifty.** Covers the most common new-backend choices in 2026. Rails / Django / Go / Rust are great — each is a 500-line codegen prompt away. PRs welcome.
+- **Frontend = source of truth for product behavior.** Best-practice infra (auth from signals, soft-delete, audit, optimistic-lock) is auto-scaffolded; product features (admin panels, notifications, analytics) are never invented — they go through Open Questions for explicit approval.
+- **One review gate, not many.** The skill produces a single reviewable design doc instead of asking 20 questions during inference. The Phase 2.6 Skeptic pass adds adversarial Open Questions but doesn't pause.
+- **Sonnet everywhere, not Haiku.** Tried Haiku for Phase 1 inventory; it dropped template-literal URL resolution and missed existing handlers. Sonnet is reliable. Cost is a few dollars per run.
 
 ### Vibe-coder mode (opt-in)
 
@@ -163,8 +182,9 @@ Rough token budget on a medium Next.js app (~200 source files); real cost varies
 |-------|-----------------|
 | Phase 1 — 4 parallel inventory agents (all Sonnet) | ~80K |
 | Phase 2 — synthesis + validation (Sonnet) | ~25K |
-| Phase 4 — codegen (Sonnet) | ~40K |
-| **Total** | **~145K** |
+| Phase 2.6 — skeptic pass (Sonnet) | ~15K |
+| Phase 4 — codegen + tests + security (Sonnet) | ~55K |
+| **Total** | **~175K** |
 
 Expect a few dollars per end-to-end run on a typical app, more on large or convoluted ones. On codebases >500 source files the `start` command warns; >1500 it refuses and asks you to scope down.
 
@@ -180,8 +200,9 @@ Expect a few dollars per end-to-end run on a typical app, more on large or convo
 6. Runs `validate.mjs` against the JSON state. Loops on errors until clean.
 7. Renders `backend-design.md` from the JSON.
 8. **Phase 2.5** — runs `scripts/detect-gaps.mjs` to produce `backend-design-next-steps.md` (env-var checklist, wire-up TODOs, placeholder review).
-9. **Phase 3** — pauses for your approval on both docs.
-10. **Phase 4** — reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md` (prepended with `codegen-placeholders.md` if any placeholders exist), then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend. Verifies the scaffold compiles before reporting done.
+9. **Phase 2.6** — spawns one `general-purpose` subagent (Sonnet) that reads the design adversarially across security, scalability/data integrity, multi-tenancy, and operability axes. Appends concrete findings to `open_questions.json` with `category: "skeptic"` and re-renders the design doc.
+10. **Phase 3** — pauses for your approval on both docs.
+11. **Phase 4** — reads the stack-specific codegen prompt from `prompts/codegen-<stack-id>.md` (prepended with `codegen-placeholders.md` if any placeholders exist), then spawns one `general-purpose` subagent (Sonnet) to scaffold the backend, including a tests directory and security middleware. Verifies the scaffold compiles AND that the test suite passes against a testcontainer Postgres before reporting done.
 
 Each phase writes a timestamp into `checkpoint.json` so the next invocation can resume cleanly.
 

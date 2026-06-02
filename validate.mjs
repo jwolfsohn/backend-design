@@ -283,12 +283,20 @@ export function validate(cwd = process.cwd()) {
 
   const openQuestions = Array.isArray(state.open_questions) ? state.open_questions : null;
   if (openQuestions) {
+    const validCategories = new Set(["product", "skeptic", undefined, null]);
+    const validAxes = new Set(["security", "scalability", "multi_tenancy", "operability", undefined, null]);
     for (const q of openQuestions) {
       // Structural fields are required; missing them breaks the renderer.
       if (!q.question) errors.push(`Open question ${q.id ?? q.title ?? "?"} missing 'question' field`);
       // Recommendation is content quality — surface as a warning so a single missing rec doesn't
       // block Phase 3. The synthesis brief still asks for one on every entry.
       if (!q.recommendation) warnings.push(`Open question ${q.id ?? q.title ?? "?"} missing 'recommendation' field — the design doc renders one alongside each question so the user has a default to accept`);
+      if (q.category !== undefined && !validCategories.has(q.category)) {
+        errors.push(`Open question ${q.id ?? q.title ?? "?"} has invalid category '${q.category}' (expected 'product' or 'skeptic')`);
+      }
+      if (q.category === "skeptic" && q.axis !== undefined && !validAxes.has(q.axis)) {
+        errors.push(`Open question ${q.id ?? q.title ?? "?"} has invalid axis '${q.axis}' (expected 'security', 'scalability', 'multi_tenancy', or 'operability')`);
+      }
     }
   }
 

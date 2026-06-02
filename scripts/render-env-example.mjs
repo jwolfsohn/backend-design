@@ -218,6 +218,44 @@ function buildSections(state, config) {
     ],
   });
 
+  // Security baseline (every server stack)
+  const isServer = stackId !== "s2ai-schema";
+  if (isServer) {
+    const securityVars = [
+      {
+        name: "ALLOWED_ORIGINS",
+        comment:
+          "Comma-separated list of origins permitted by CORS. The server refuses to start in production if this is unset or contains '*'.",
+        default: "http://localhost:3000",
+      },
+      {
+        name: "LOG_LEVEL",
+        comment:
+          "Log level: trace | debug | info | warn | error. Dev defaults to 'debug' with pretty output; production stays JSON.",
+        default: "info",
+      },
+      {
+        name: "RATE_LIMIT_MAX",
+        comment: "Global rate limit (requests per 15-minute window per IP).",
+        default: "1000",
+      },
+      {
+        name: "RATE_LIMIT_WRITE_MAX",
+        comment: "Tighter limit applied to POST/PATCH/DELETE routes.",
+        default: "100",
+      },
+    ];
+    if (stackId === "nextjs-prisma") {
+      securityVars.push({
+        name: "UPSTASH_REDIS_URL",
+        comment:
+          "Optional: enables shared rate limiting across Vercel function invocations via @upstash/ratelimit. Without it, an in-memory limiter is used (fine for single-instance / dev).",
+        commented: true,
+      });
+    }
+    sections.push({ title: "Security baseline", vars: securityVars });
+  }
+
   return sections;
 }
 
