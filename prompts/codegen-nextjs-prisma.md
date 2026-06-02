@@ -64,6 +64,17 @@ Authoritative spec is in `.backend-design/state/`:
 - Do not implement endpoints not in `endpoints.json`. Do not invent fields.
 - Append to `.env.example` if it exists, don't overwrite. Add: `DATABASE_URL`, `JWT_SECRET`.
 
+## Best-practice column semantics
+
+Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `users` entity exists) `created_by`, `updated_by`. Handlers must respect them:
+
+- **Soft delete (`deleted_at`)**: every list and detail Prisma query adds `where: { deleted_at: null, ... }`. `DELETE` handlers do `prisma.<model>.update({ where: { id }, data: { deleted_at: new Date() } })` instead of `delete()`. No restore route.
+- **Optimistic locking (`version`)**: PATCH handlers read `request.headers.get("if-match")`. If present, parse to integer and add `version: <parsedInt>` to the Prisma `where` clause; catch the Prisma `P2025` error (record not found) and respond 409 `Response.json({ error: "version_conflict", current_version: <current> }, { status: 409 })` after re-fetching. Absent header → `data: { ..., version: { increment: 1 } }`. Single-record responses include `version`.
+- **Audit columns (`created_by`, `updated_by`)**: in POST handlers set both to `(await getCurrentUser(request)).id`. In PATCH set `updated_by` only. Endpoints with `auth: "none"` omit both.
+- **Partial unique indexes for soft-deletable entities**: prefer Prisma `@@index([col], where: { deleted_at: null })` or a raw SQL migration if Prisma's version doesn't express partial uniques natively. Document the manual migration in `BACKEND_SETUP.md`.
+- **Placeholder routes (`temporary: true`)** never touch the DB.
+- **Webhook routes** typically have no authenticated user; leave `created_by`/`updated_by` as NULL when writes target audit-equipped entities.
+
 ## Mapping endpoints to file paths
 
 - `GET /api/posts` → `app/api/posts/route.ts` → `export async function GET(request) {}`

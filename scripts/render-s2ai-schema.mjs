@@ -88,6 +88,8 @@ function buildFieldLine(field) {
   const lowerName = (field.name ?? "").toLowerCase();
   const isCreatedAt = lowerName === "created_at" || lowerName === "createdat";
   const isUpdatedAt = lowerName === "updated_at" || lowerName === "updatedat";
+  const isDeletedAt = lowerName === "deleted_at" || lowerName === "deletedat";
+  const isVersion = lowerName === "version";
 
   const validate = {};
   if (field.required && !field.pk && !isCreatedAt && !isUpdatedAt) {
@@ -97,6 +99,8 @@ function buildFieldLine(field) {
   const standaloneDecorators = [];
   if (isCreatedAt) standaloneDecorators.push("@autoGenerate", "@readOnly");
   if (isUpdatedAt) standaloneDecorators.push("@autoUpdate", "@readOnly");
+  if (isDeletedAt) standaloneDecorators.push("@nullable", "@indexed");
+  if (isVersion) standaloneDecorators.push("@autoGenerate");
   if (isSecret(field)) standaloneDecorators.push("@encrypt");
 
   const decorators = [];

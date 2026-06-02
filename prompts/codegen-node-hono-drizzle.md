@@ -65,6 +65,17 @@ backend/
 - Use `config.pkg_manager` from `.backend-design/config.json` (default `pnpm`) for every README command and any `package.json` scripts you generate. Refer to it as `<PM>` below.
 - Do not implement endpoints not in `endpoints.json`. Do not invent fields.
 
+## Best-practice column semantics
+
+Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `users` entity exists) `created_by`, `updated_by`. Handlers must respect them in Drizzle:
+
+- **Soft delete (`deleted_at`)**: list/detail queries combine `isNull(<table>.deleted_at)` with any other filters via `and(...)`. `DELETE /<resource>/:id` runs `db.update(<table>).set({ deleted_at: new Date() }).where(eq(<table>.id, id))` instead of `db.delete(...)`. No restore endpoint.
+- **Optimistic locking (`version`)**: PATCH uses ``db.update(<table>).set({ ..., version: sql`${<table>.version} + 1` }).where(eq(<table>.id, id)).returning()``. If the request has an `If-Match` header, parse to integer and add `eq(<table>.version, <parsedInt>)` to the `where`; if the returning array is empty, respond 409 with `{ error: "version_conflict", current_version: <current> }` after a re-fetch. Every single-record response includes `version`.
+- **Audit columns (`created_by`, `updated_by`)**: in POST handlers set both to `c.get('user').id`. In PATCH set `updated_by` only. Endpoints with `auth: "none"` omit both.
+- **Partial unique indexes for soft-deletable entities**: use Drizzle's `uniqueIndex('<table>_<col>_active_unique').on(<table>.<col>).where(sql\`deleted_at IS NULL\`)` in place of a column-level `.unique()`. Required so re-creating a soft-deleted row doesn't collide.
+- **Placeholder routes (`temporary: true`)** never touch the DB.
+- **Webhook routes** typically have no `c.get('user')`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
+
 ## README run commands
 
 Substitute `<PM>` with `config.pkg_manager` (`pnpm` / `npm` / `yarn` / `bun`). For `npm`, prefix scripts with `npm run` (e.g. `npm run dev`); the others run scripts directly.

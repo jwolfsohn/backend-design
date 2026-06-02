@@ -78,9 +78,9 @@ Before Phase 1:
 
 2. **Confirm to the user** in one line: `Targeting <config.stack.label> with <config.auth.strategy> auth on <config.frontend.framework> → <config.output_dir>`.
 
-3. **Load framework patterns.** Read `<SKILL_DIR>/prompts/frontend-patterns.md`. Extract the section whose heading matches `config.frontend.patterns_key`. You will inject this section into each Phase-1 agent's prompt so they search the right files. Keep it handy — call it `<<PATTERNS>>` in the agent briefs below.
+3. **Resolve framework patterns file.** The patterns live at `<SKILL_DIR>/prompts/patterns/<patterns_key>.md` — one small file per framework, drop-in for the `<<PATTERNS>>` slot. **Do not read it yourself.** The Phase 1 subagents will each `Read` it directly; the orchestrator only needs the path. Call this path `<<PATTERNS_FILE>>` below.
 
-   If `patterns_key` does not match any section in `frontend-patterns.md`, stop and tell the user: "Your detected framework `<framework>` is unrecognized. Edit `.backend-design/config.json` or use `prompts/frontend-patterns.md` patterns manually."
+   If `<SKILL_DIR>/prompts/patterns/<patterns_key>.md` does not exist, stop and tell the user: "Your detected framework `<framework>` is unrecognized. Edit `.backend-design/config.json` to set `frontend.patterns_key` to one of the files in `prompts/patterns/`."
 
 4. **Create the state directory:**
    ```bash
@@ -336,7 +336,26 @@ Give it this brief:
 > }
 > ```
 >
-> Infer entities from: forms (input fields → columns), list/detail screens, and the `entities_displayed` field on each screen. Always include a `users` entity if `forms.json -> auth_surface.signup.present` or `login.present` is true. Use `snake_case` for table/column names. Always include `id` (uuid pk), `created_at`, `updated_at`.
+> Infer entities from: forms (input fields → columns), list/detail screens, and the `entities_displayed` field on each screen. Use `snake_case` for table/column names.
+>
+> **Always include a `users` entity if auth is implied.** Auth is implied when ANY of the following hold (the strongest signal wins, in this priority order):
+>
+> 1. `forms.json -> auth_surface.signup.present === true` → `inferred_from: "signup_form"`
+> 2. `forms.json -> auth_surface.login.present === true` → `inferred_from: "login_form"`
+> 3. Any screen in `screens.json` has `auth_required: true` → `inferred_from: "auth_required_screen"`
+> 4. Any `components.json -> shared_state.storage_keys[].key` matches `/token|jwt|auth|session/i` → `inferred_from: "token_storage_key"`
+> 5. Any endpoint in `endpoints.json` has a non-null `auth_header` → `inferred_from: "auth_header"`
+> 6. Any `screens[].data_fetches[].url` targets `/api/auth/*` → `inferred_from: "auth_path"`
+>
+> When auth is implied without a UI form (signals 3–6), still emit the `users` entity, set `auth.json -> signup: true` and `auth.json -> inferred_from: "<signal-name>"`, and emit `POST /auth/signup` / `POST /auth/login` / `POST /auth/logout`. Set `triggered_by` on each auth endpoint to the file:line of the winning signal so the existing "every endpoint has a UI trigger" invariant in `validate.mjs` is satisfied. `detect-gaps.mjs` will still raise `missing_auth_ui` as a blocker — that's correct; the user needs the UI even though the backend is built.
+>
+> **Best-practice columns on every entity** (in addition to `id`, `created_at`, `updated_at`):
+>
+> - `{"name": "deleted_at", "type": "timestamptz", "required": false, "default": null}` — soft delete. List/detail queries will filter `WHERE deleted_at IS NULL`; `DELETE` sets this column instead of removing the row.
+> - `{"name": "version", "type": "integer", "required": true, "default": "1"}` — optimistic lock. PATCH handlers increment by 1; if an `If-Match` header is present they compare first and 409 on mismatch.
+> - If (and only if) a `users` entity exists AND the entity in question is not the `users` entity itself: `{"name": "created_by", "type": "uuid", "required": false, "fk": "users.id"}` and `{"name": "updated_by", "type": "uuid", "required": false, "fk": "users.id"}`. Self-referential audit FKs on `users` create chicken-and-egg insert problems — skip them there.
+>
+> Webhook event logs, append-only audit tables, and any entity the agent reasonably judges has no concept of an actor or soft-delete may omit `deleted_at`/`version`/`created_by`/`updated_by`. When in doubt, include them — `validate.mjs` warns if they're missing but does not error.
 >
 > **2. `.backend-design/state/relationships.json`** — a JSON array:
 >
@@ -439,6 +458,29 @@ Give it this brief:
 > Infer method from the button label: "Delete/Remove" → `DELETE`; "Edit/Update/Save" → `PATCH`; everything else → `POST`. Treat "Cancel" as `POST` only if the button is clearly destructive (e.g. "Cancel subscription"); ambiguous labels like "Cancel" inside a modal typically just close the dialog and should not become endpoints. **Always set `auth: "none"` on placeholders**, even when the origin screen is auth-gated — codegen strips auth middleware from placeholder routes anyway ([codegen-placeholders.md](prompts/codegen-placeholders.md)), so setting `required` would mislead readers of `backend-design.md`. The user re-adds auth when they replace the stub. Infer path from a slugified version of the label scoped under the screen's URL when possible (e.g. button "Become a host" → `/api/hosts/apply`). When in doubt, prefix with `/api/` and slugify the label. **Set `temporary: true` and `placeholder_reason` on every such endpoint** — these fields signal codegen to scaffold a 501 stub rather than a real handler. Do not invent request body fields; leave `request_body: {}`. Do not infer indices or relations from a placeholder. If `vibe_coder` is false or unset, **never** generate placeholder endpoints — flag orphan buttons as gaps in Phase 2.5 instead.
 >
 > **Skip external endpoints.** Endpoints with `is_external: true` are calls to third-party services (Stripe, OpenAI, etc.). Do not refine them, do not derive implied CRUD around them, and do not assign them an `auth` field. Carry them through unchanged so the design doc can list them under "External integrations".
+>
+> **Domain pattern pass.** Before writing `open_questions.json`, scan `screen.id`, `screen.path`, `component.name`, and `endpoint.path` (all lowercased, joined into one corpus) for these keyword classes. A class triggers only when **≥2 distinct tokens** match — single-token matches generate too many false positives.
+>
+> | Class | Tokens (substring match) | Recommended entities |
+> |---|---|---|
+> | `ecommerce` | `cart`, `checkout`, `product`, `price`, `sku`, `order`, `basket` | `OrderLineItem`, `Inventory`, `Address`, `Payment` |
+> | `chat` | `message`, `conversation`, `thread`, `chat`, `inbox`, `dm` | `Conversation`, `Message`, `Participant` |
+> | `social` | `post`, `comment`, `like`, `follow`, `feed`, `friend`, `react`, `reaction` | `Like`, `Follow`, `Notification` |
+> | `booking` | `reserve`, `listing`, `book`, `availability`, `slot`, `check_in`, `check_out`, `guest`, `stay` | `Booking`, `Availability` |
+> | `cms` | `article`, `blog`, `tag`, `category`, `draft`, `publish`, `revision` | `Tag`, `ArticleTag` (join), `Revision` |
+>
+> For each triggered class, write **one** entry in `open_questions.json` with `id: "domain-<class>-entities"`, evidence file:lines from the matching screens/components, and an opinionated recommendation tied to v1 cadence. **Do not** add these entities to `entities.json` — the user accepts or rejects in Phase 3. Example:
+>
+> ```json
+> {
+>   "id": "domain-ecommerce-entities",
+>   "title": "E-commerce signals detected — scaffold deeper entities?",
+>   "question": "Cart + checkout + price tokens are present in the UI. Should the backend include OrderLineItem, Inventory, Address, and Payment entities now, or wait until each is wired to real UI?",
+>   "context": "Tokens matched: cart (components/CartDrawer.tsx:14), checkout (app/checkout/page.tsx:1), price (components/PriceTag.tsx:8). Only an Order entity was inferred from the visible checkout form.",
+>   "recommendation": "Scaffold OrderLineItem and Address for v1 — they're load-bearing for any real order. Defer Inventory and Payment until a payment provider is picked (each has heavy provider coupling).",
+>   "evidence": ["components/CartDrawer.tsx:14", "app/checkout/page.tsx:1", "components/PriceTag.tsx:8"]
+> }
+> ```
 >
 > **5. `.backend-design/state/open_questions.json`** — a JSON array of **product-intent ambiguities** that the design surfaces but cannot resolve from the UI alone. These are the questions where the codebase doesn't have a single right answer and the human has to choose. **Each question must include a recommendation** — your honest best-practice opinion given what you observed in the frontend — so the user has a default to accept rather than a question they have to answer cold. Schema:
 >
@@ -612,7 +654,7 @@ Then report to the user: stack used, output directory, entity count, endpoint co
 ## Rules
 
 - **Do not skip Phase 3.** The user must see and approve the design doc before any backend code is written. This is the whole point of the skill.
-- **Frontend is the source of truth.** Never add endpoints, tables, or fields the UI doesn't imply. If you think the UI is missing something obvious (e.g., login form but no signup form), surface it in the "Open questions" section instead of silently adding it.
+- **Frontend is the source of truth for product behavior.** Never invent endpoints, tables, or fields that represent product features the UI doesn't imply (e.g. don't add an admin dashboard's endpoints unless an admin page exists; don't add a notifications feed unless the UI shows one). **Best-practice infrastructure is scaffolded automatically** — auth from non-UI signals (`auth_required` screens, token storage keys, bearer headers), soft-delete (`deleted_at`), optimistic-lock (`version`), and audit columns (`created_by`/`updated_by`) on every entity. **Domain patterns** (e-commerce, chat, social, booking, CMS keyword hits) go through Open Questions with recommendations — surfaced for the user to accept or reject, never silently added. If the UI is missing something obvious (e.g., login form but no signup form), surface it in Open Questions instead of silently adding it.
 - **Respect the chosen stack.** `.backend-design/config.json` records the user's choice. Do not deviate — if they picked `python-fastapi`, do not generate TypeScript. If `config.json` is missing, tell them to run `npx backend-design start` first.
 - **Don't touch the frontend** unless `stack.framework === "nextjs"`. For the Next.js stack, you may add files under `app/api/`, `lib/`, and `prisma/` in the existing project. For all other stacks, write only to `config.output_dir` (default `./backend`), `./backend-design.md`, and `./.backend-design/`. **Exception:** `s2ai-schema` writes a single file `./schema.mmd` at the repo root regardless of `output_dir`.
 - **State JSON is the source of truth.** Codegen reads from `.backend-design/state/*.json`. `backend-design.md` is rendered deterministically from the JSON by `scripts/render-design.mjs` — any hand-edits to it will be overwritten. When the user wants design changes, edit the JSON and re-render.

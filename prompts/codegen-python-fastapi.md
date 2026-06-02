@@ -65,6 +65,17 @@ backend/
 - Return models should set `model_config = ConfigDict(from_attributes=True)` so they serialize SQLAlchemy ORM objects.
 - Do not implement endpoints not in `endpoints.json`. Do not invent fields not in `entities.json`.
 
+## Best-practice column semantics
+
+Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `users` entity exists) `created_by`, `updated_by`. Handlers must respect them:
+
+- **Soft delete (`deleted_at`)**: every list and detail query filters with `.where(<Model>.deleted_at.is_(None))`. `DELETE /<resource>/{id}` sets `obj.deleted_at = func.now()` (after `session.get`) and commits — do NOT issue `session.delete(obj)`. No restore endpoint.
+- **Optimistic locking (`version`)**: prefer SQLAlchemy 2.0's built-in optimistic concurrency by adding `__mapper_args__ = {"version_id_col": <Model>.version}` on every soft-deletable model. SQLAlchemy will auto-increment on update and raise `StaleDataError` on mismatch. In PATCH handlers, if the request has an `If-Match` header, parse to int and assign `obj.version = parsed_int` (the mapper raises if stale); catch `StaleDataError` and return `HTTPException(status_code=409, detail={"error": "version_conflict", "current_version": <current>})` after a re-fetch. Pydantic response models include `version`.
+- **Audit columns (`created_by`, `updated_by`)**: in POST handlers set both to `current_user.id` (from `Depends(get_current_user)`). In PATCH set `updated_by` only. Endpoints with `auth: "none"` omit both.
+- **Partial unique indexes for soft-deletable entities**: emit `Index("ix_<table>_<col>_active_unique", "<col>", unique=True, postgresql_where=text("deleted_at IS NULL"))` in the model's `__table_args__` instead of a column-level `unique=True`. Required so re-creating soft-deleted rows doesn't collide.
+- **Placeholder routes (`temporary: true`)** never touch the DB.
+- **Webhook routes** typically have no `current_user`; leave `created_by`/`updated_by` as `None` when writes target audit-equipped entities.
+
 ## Type mapping (entities.json → SQLAlchemy)
 
 | entities.json type | SQLAlchemy |

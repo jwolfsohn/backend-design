@@ -84,11 +84,12 @@ For production, replace the `lib/storage.ts` stub with an S3/R2 implementation r
 
 ## missing_auth_ui
 
-**Why**: Your design has signup/login endpoints (see `backend-design.md` → Auth model) but the frontend has no forms that submit to them. No user can ever sign up, so authenticated screens will be unreachable in practice.
+**Why**: Your design has signup/login endpoints (see `backend-design.md` → Auth model) but the frontend has no forms that submit to them. No user can ever sign up, so authenticated screens will be unreachable in practice. If `auth.inferred_from` is set in `.backend-design/state/auth.json`, the skill scaffolded auth because it spotted that signal (an auth-gated screen, a token storage key, a bearer header, or an `/api/auth/*` fetch) — you can remove the signal instead of adding the form if auth wasn't intentional.
 
-**How**: Two paths:
+**How**: Three paths:
 1. **Add the forms** — ask Claude: *"Scaffold signup and login pages for this frontend. POST to /api/auth/signup and /api/auth/login. Store the returned JWT in localStorage under the key 'auth_token'. Redirect to / on success."*
-2. **Drop auth from the design** — if you don't actually want users, edit `.backend-design/state/auth.json` and set `signup: false, login: false`, then re-run `/backend-design`. Any screens marked `auth_required: true` will need to be made public.
+2. **Remove the inferring signal** — if auth wasn't intentional: drop `auth_required: true` from screens, rename token-shaped storage keys (e.g. `auth_token` → `client_id`), remove bearer headers, or remove `/api/auth/*` fetches. Then re-run `/backend-design`.
+3. **Drop auth from the design** — edit `.backend-design/state/auth.json` and set `signup: false, login: false, inferred_from: null`, then re-run `/backend-design`. Any screens marked `auth_required: true` will need to be made public.
 
 ## unwired_button
 

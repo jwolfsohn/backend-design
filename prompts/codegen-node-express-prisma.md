@@ -68,6 +68,17 @@ backend/
 - Use `config.pkg_manager` from `.backend-design/config.json` (default `pnpm`) for every README command and any `package.json` scripts you generate. Refer to it as `<PM>` below. For npm, prefix scripts with `npm run` (e.g. `npm run dev`); pnpm/yarn/bun run scripts directly.
 - Do not implement endpoints not in `endpoints.json`. Do not invent fields not in `entities.json`.
 
+## Best-practice column semantics
+
+Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `users` entity exists) `created_by`, `updated_by`. Handlers must respect them:
+
+- **Soft delete (`deleted_at`)**: every list and detail Prisma query adds `where: { deleted_at: null, ... }`. `DELETE /<resource>/:id` does `prisma.<model>.update({ where: { id }, data: { deleted_at: new Date() } })` instead of `delete()`. No restore endpoint.
+- **Optimistic locking (`version`)**: PATCH handlers increment `version` by 1. If the request has an `If-Match` header, parse it as an integer and add `version: <parsedInt>` to the Prisma `where` clause; if the update affects zero rows (Prisma will throw `P2025` Record not found), respond 409 with `{ error: "version_conflict", current_version: <current> }` after re-fetching the current value. Absent `If-Match` → just `data: { ..., version: { increment: 1 } }`. Every response body for a single record includes `version`.
+- **Audit columns (`created_by`, `updated_by`)**: in POST handlers, set both to `req.user.id`. In PATCH handlers, set `updated_by` to `req.user.id` only (leave `created_by` alone). Endpoints with `auth: "none"` omit both fields from the insert/update (NULL is allowed because the FK is nullable).
+- **Partial unique indexes for soft-deletable entities**: when a field has `unique: true` on an entity that also has `deleted_at`, do NOT emit a column-level `@unique` in `schema.prisma`. Instead use `@@index([col], where: { deleted_at: null }, name: "<table>_<col>_active_unique")` — or, if Prisma's preview features allow it, `@@unique([col], name: ..., where: { deleted_at: null })`. If Prisma can't express the partial unique constraint, fall back to a raw SQL migration emitted via `prisma db execute --file ./prisma/partial-unique.sql` and document it in `BACKEND_SETUP.md`.
+- **Placeholder routes (`temporary: true`)** never touch the DB — soft delete, version, and audit columns are irrelevant there.
+- **Webhook routes** (`is_webhook: true`) typically have no `req.user`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
+
 ## README run commands
 
 ```

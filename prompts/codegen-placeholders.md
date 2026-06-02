@@ -8,7 +8,7 @@ When `endpoints.json` contains an entry with `"temporary": true`, scaffold a **p
    - In **production** (`process.env.NODE_ENV === "production"`, or the framework equivalent), return HTTP **501 Not Implemented** with body `{ "error": "Not implemented", "todo": "<placeholder_reason from endpoints.json>", "see": "backend-design-next-steps.md" }`.
    - In **non-production**, **throw** a clear runtime error: `throw new Error("Placeholder endpoint <METHOD> <path> — replace with a real implementation. See backend-design-next-steps.md.")`. Throwing (rather than returning 501) makes the placeholder loud during local dev so the developer notices immediately.
 
-2. **No data layer access.** A placeholder must never query the database, call external APIs, or mutate state. Pure stub.
+2. **No data layer access.** A placeholder must never query the database, call external APIs, or mutate state. Pure stub. Best-practice columns (`deleted_at`, `version`, `created_by`, `updated_by`) are irrelevant here — the route 501s before any model is touched.
 
 3. **Loud marker comment** at the top of the handler:
 

@@ -212,12 +212,22 @@ function detectMissingAuthUi(state) {
   const wantsSignup = auth?.signup || hasSignupEndpoint;
   const wantsLogin = auth?.signup || hasLoginEndpoint || authSurface.signup?.present;
 
+  // When auth was inferred from a non-UI signal (auth_required screens, token storage keys,
+  // bearer headers, /api/auth/* fetches), the design is correct but the UI is missing —
+  // reword the blocker so it's clear the gap is the form, not the design.
+  const inferredFrom = auth?.inferred_from;
+  const inferredWithoutUi =
+    inferredFrom && inferredFrom !== "signup_form" && inferredFrom !== "login_form";
+  const inferredSuffix = inferredWithoutUi
+    ? ` (auth was inferred from ${inferredFrom}; add the UI or remove the inferring signal)`
+    : "";
+
   if (wantsSignup && !authSurface.signup?.present) {
     gaps.push({
       type: "missing_auth_ui",
       specifier: "signup",
       severity: "blocker",
-      what: "Signup endpoint exists in the design but the frontend has no signup form",
+      what: `Signup endpoint exists in the design but the frontend has no signup form${inferredSuffix}`,
       evidence: ["forms.json"],
     });
   }
@@ -226,7 +236,7 @@ function detectMissingAuthUi(state) {
       type: "missing_auth_ui",
       specifier: "login",
       severity: "blocker",
-      what: "Login endpoint exists in the design but the frontend has no login form",
+      what: `Login endpoint exists in the design but the frontend has no login form${inferredSuffix}`,
       evidence: ["forms.json"],
     });
   }

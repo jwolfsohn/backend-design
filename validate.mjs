@@ -125,6 +125,20 @@ export function validate(cwd = process.cwd()) {
       if (!f.type) errors.push(`Entity ${ent.name}.${f.name ?? "?"} has no type`);
       if (fieldNames.has(f.name)) errors.push(`Entity ${ent.name} has duplicate field: ${f.name}`);
       fieldNames.add(f.name);
+      if (f.name === "version") {
+        if (f.type !== "integer") errors.push(`Entity ${ent.name}.version must be type 'integer' (got '${f.type}')`);
+        if (f.required !== true) errors.push(`Entity ${ent.name}.version must be required: true`);
+        if (f.default !== "1" && f.default !== 1) errors.push(`Entity ${ent.name}.version must default to 1 (got ${JSON.stringify(f.default)})`);
+      }
+      if (typeof f.fk === "string" && f.fk.includes(".")) {
+        const [fkTable, fkCol] = f.fk.split(".");
+        const targetEnt = findEntityByTable(entityByName, fkTable);
+        if (!targetEnt) {
+          errors.push(`Entity ${ent.name}.${f.name} fk '${f.fk}' references unknown table '${fkTable}' — no entity has table=${fkTable}`);
+        } else if (!(targetEnt.fields ?? []).some((tf) => tf.name === fkCol)) {
+          errors.push(`Entity ${ent.name}.${f.name} fk '${f.fk}' references column '${fkCol}' which does not exist on entity '${targetEnt.name}'`);
+        }
+      }
     }
     const hasPk = (ent.fields ?? []).some((f) => f.pk);
     if (!hasPk) errors.push(`Entity ${ent.name} has no primary key`);
@@ -167,7 +181,7 @@ export function validate(cwd = process.cwd()) {
     }
   }
 
-  const authEntityName = findAuthEntityName(entityByName, authSurface);
+  const authEntityName = findAuthEntityName(entityByName, authSurface, auth);
   const displayedEntities = new Set(screens.flatMap((s) => s.entities_displayed ?? []));
   for (const ent of entities) {
     if (ent.name === authEntityName) continue;
@@ -214,12 +228,32 @@ export function validate(cwd = process.cwd()) {
     }
   }
 
-  const authNeeded = authSurface?.signup?.present || authSurface?.login?.present;
-  if (authNeeded && !auth && !isPhase1Only) {
+  const authNeededFromUi = authSurface?.signup?.present || authSurface?.login?.present;
+  const authNeededFromInference = !!auth?.inferred_from || auth?.signup === true;
+  const authNeeded = authNeededFromUi || authNeededFromInference;
+  if (authNeededFromUi && !auth && !isPhase1Only) {
     errors.push("Auth surface present in UI but auth.json is missing");
   }
   if (authNeeded && entities.length && !authEntityName) {
-    errors.push("Auth surface present but no auth entity declared (expected User/Account/Member/Profile)");
+    const why = authNeededFromUi
+      ? "Auth surface present"
+      : `Auth inferred from '${auth?.inferred_from ?? "auth.signup=true"}'`;
+    errors.push(`${why} but no auth entity declared (expected User/Account/Member/Profile)`);
+  }
+
+  if (authEntityName && entities.length) {
+    for (const ent of entities) {
+      if (ent.name === authEntityName) continue;
+      const names = new Set((ent.fields ?? []).map((f) => f.name));
+      const missing = [];
+      if (!names.has("deleted_at")) missing.push("deleted_at");
+      if (!names.has("version")) missing.push("version");
+      if (!names.has("created_by")) missing.push("created_by");
+      if (!names.has("updated_by")) missing.push("updated_by");
+      if (missing.length) {
+        warnings.push(`Entity ${ent.name} is missing best-practice column(s): ${missing.join(", ")} — codegen handlers assume these exist`);
+      }
+    }
   }
 
   if (auth && !isPhase1Only) {
@@ -265,12 +299,22 @@ export function validate(cwd = process.cwd()) {
   return { errors, warnings, state };
 }
 
-function findAuthEntityName(entityByName, authSurface) {
-  const authNeeded = authSurface?.signup?.present || authSurface?.login?.present;
+function findAuthEntityName(entityByName, authSurface, auth) {
+  const authNeeded =
+    authSurface?.signup?.present ||
+    authSurface?.login?.present ||
+    !!auth?.inferred_from;
   if (!authNeeded) return null;
   const candidates = ["User", "Account", "Member", "Profile"];
   for (const c of candidates) {
     if (entityByName.has(c)) return c;
+  }
+  return null;
+}
+
+function findEntityByTable(entityByName, table) {
+  for (const ent of entityByName.values()) {
+    if (ent.table === table) return ent;
   }
   return null;
 }

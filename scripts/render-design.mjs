@@ -188,6 +188,9 @@ function authSection(state) {
     out.push(`- **Secret env var**: \`${auth.secret_env ?? "JWT_SECRET"}\``);
   }
   if (auth.password_hash) out.push(`- **Password hashing**: \`${auth.password_hash}\`${auth.bcrypt_cost ? ` (cost ${auth.bcrypt_cost})` : ""}`);
+  if (auth.inferred_from && auth.inferred_from !== "signup_form" && auth.inferred_from !== "login_form") {
+    out.push(`- **Inferred from**: \`${auth.inferred_from}\` (no login/signup form in the UI — backend was scaffolded from this signal; the next-steps doc has details)`);
+  }
   out.push(`- **Signup**: ${yesNo(auth.signup)}`);
   out.push(`- **Email verification**: ${yesNo(auth.email_verification)}`);
   out.push(`- **Password reset**: ${yesNo(auth.password_reset)}`);
