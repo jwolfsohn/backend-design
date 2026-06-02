@@ -1,0 +1,122 @@
+# Example GitHub Actions workflow for a backend scaffolded by backend-design.
+# Copy to .github/workflows/backend.yml in your own repo and adapt.
+#
+# Uses a real Postgres service container instead of testcontainers — avoids
+# Docker-in-Docker on Actions runners. The tests are written against
+# DATABASE_URL, so they don't care whether it points at a testcontainer
+# (local dev) or a service container (CI).
+#
+# Node stacks are the primary example. A Python/FastAPI variant is at the
+# bottom of this file (commented out — uncomment and delete the Node job
+# if you're on python-fastapi).
+
+name: backend
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate design state
+        run: npx backend-design validate
+
+      - name: Type check
+        working-directory: backend
+        run: pnpm tsc --noEmit
+
+      - name: Run tests
+        working-directory: backend
+        env:
+          # Override testcontainer-discovered URL with the service Postgres.
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+          JWT_SECRET: ci-test-secret-not-for-prod
+          ALLOWED_ORIGINS: http://localhost:3000
+        run: pnpm test
+
+# --------------------------------------------------------------------------
+# Python / FastAPI variant — uncomment and replace the job above if you
+# picked the python-fastapi stack.
+# --------------------------------------------------------------------------
+#
+# jobs:
+#   validate-and-test:
+#     runs-on: ubuntu-latest
+#
+#     services:
+#       postgres:
+#         image: postgres:16
+#         env:
+#           POSTGRES_PASSWORD: postgres
+#           POSTGRES_DB: test
+#         ports:
+#           - 5432:5432
+#         options: >-
+#           --health-cmd "pg_isready -U postgres"
+#           --health-interval 5s
+#           --health-timeout 5s
+#           --health-retries 5
+#
+#     steps:
+#       - uses: actions/checkout@v4
+#
+#       - uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.12"
+#           cache: pip
+#           cache-dependency-path: backend/pyproject.toml
+#
+#       - name: Install
+#         working-directory: backend
+#         run: |
+#           pip install --upgrade pip
+#           pip install -e ".[dev]"
+#
+#       - name: Validate design state
+#         run: npx backend-design validate
+#
+#       - name: Import smoke test
+#         working-directory: backend
+#         run: python -c "from app.main import app"
+#
+#       - name: Run tests
+#         working-directory: backend
+#         env:
+#           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/test
+#           JWT_SECRET: ci-test-secret-not-for-prod
+#           ALLOWED_ORIGINS: http://localhost:3000
+#         run: pytest

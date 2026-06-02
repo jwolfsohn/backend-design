@@ -59,13 +59,39 @@ Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions 
 
 ## Design choices (and why)
 
-- **Postgres only.** Strong FKs, mature JSON support, the widest hosting story (RDS / Neon / Supabase / Railway / fly.io). Adding MySQL / SQLite / SQL Server means a parallel codegen prompt per stack — happy to take PRs.
+- **Postgres only.** Strong FKs, mature JSON support, the widest hosting story (see the table below). Adding MySQL / SQLite / SQL Server means a parallel codegen prompt per stack — happy to take PRs.
 - **No NoSQL.** The skill infers entities + relationships from the UI, which assumes a relational target. Mongo / DynamoDB would need entirely different inference (denormalize for access patterns) and is out of scope.
 - **JSON state in `.backend-design/state/`, not YAML or one big file.** Each phase writes one file → diffable in code review, scriptable, parallel-safe. `render-design.mjs` is the only thing that produces the human-readable Markdown.
 - **Five stacks, not fifty.** Covers the most common new-backend choices in 2026. Rails / Django / Go / Rust are great — each is a 500-line codegen prompt away. PRs welcome.
 - **Frontend = source of truth for product behavior.** Best-practice infra (auth from signals, soft-delete, audit, optimistic-lock) is auto-scaffolded; product features (admin panels, notifications, analytics) are never invented — they go through Open Questions for explicit approval.
 - **One review gate, not many.** The skill produces a single reviewable design doc instead of asking 20 questions during inference. The Phase 2.6 Skeptic pass adds adversarial Open Questions but doesn't pause.
 - **Sonnet everywhere, not Haiku.** Tried Haiku for Phase 1 inventory; it dropped template-literal URL resolution and missed existing handlers. Sonnet is reliable. Cost is a few dollars per run.
+
+### Where to host Postgres
+
+| Provider | Connection-string source | Free tier | Notes |
+|---|---|---|---|
+| **Neon** | Project → "Connection details" | Yes — autoscales to zero | Fastest serverless-friendly path; pooled URL for Vercel/Lambda |
+| **Supabase** | Settings → Database → Connection string | Yes | Optional auth UI + pgvector built in |
+| **Railway** | Add Postgres plugin → `DATABASE_URL` var | Trial credit | Easiest "click to deploy with backend" path |
+| **Fly.io** | `fly postgres create` | Trial credit | Postgres lives next to your app region |
+| **AWS RDS** | RDS console → endpoint + credentials | No | Boring, scales forever, more setup |
+| **Local Docker** | `docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=postgres postgres:16` | n/a | Same `DATABASE_URL` shape as the rest |
+
+Switch by editing `.env` — no code changes.
+
+## What it doesn't do (yet)
+
+Owning the boundaries so you don't waste time finding out later.
+
+- **OpenAPI / Swagger generation** — coming in v0.10.0. All the data already lives in `.backend-design/state/endpoints.json`; the render script is the only missing piece.
+- **Cookie sessions** — coming in v0.11.0 as a third auth option (`jwt` / `session` / `none`), Postgres-backed by default (Redis available as `SESSION_STORE=redis`), with CSRF middleware per stack. Until then: pick JWT, or scaffold sessions yourself afterwards.
+- **Async jobs / queues** — not inferable from the UI. Pick a queue that fits your runtime (BullMQ + Redis for Node, pg-boss for Postgres-native, Inngest / Trigger.dev for serverless, Celery for Python) and wire it manually.
+- **WebSockets** — server scaffolding is the easy part; channels, presence, auth-on-connect, and pub/sub at scale are template-resistant. Reach for [Pusher](https://pusher.com), [Ably](https://ably.com), or Supabase Realtime if you don't want to build it.
+- **Multi-database** — Postgres only, by choice (see Design Choices). Prisma / Drizzle / SQLAlchemy all support MySQL and SQLite; PRs that add per-DB type mappings + migration syntax to each codegen prompt are welcome.
+- **GraphQL** — **intentionally out of scope.** The whole skill assumes REST/JSON inference from `fetch()` calls. A GraphQL pipeline would need a different inference model entirely. If you want GraphQL on top, hand-write a thin layer over the generated REST handlers.
+
+For running the generated backend in CI, see [`docs/example-ci.yml`](docs/example-ci.yml) — a drop-in GitHub Actions workflow that boots a real Postgres service container, type-checks, and runs the test suite.
 
 ### Vibe-coder mode (opt-in)
 

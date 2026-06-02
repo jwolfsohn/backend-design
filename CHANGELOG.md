@@ -15,12 +15,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
   - FastAPI: `slowapi` rate limiting, security headers middleware, `CORSMiddleware` allowlist, `structlog` for JSON logs in production.
 - `CHANGELOG.md` (this file) and a `## Design choices` section in `README.md`.
 - `docs/demo.md` — script for recording the README demo gif.
+- `docs/example-ci.yml` — drop-in GitHub Actions workflow example for users to copy into their own repos (Postgres service container + validate + tsc + test; commented-out Python/FastAPI variant at the bottom).
 
 ### Changed
 - Render-design now partitions Open Questions by `category`: synthesis-author questions render first, skeptic-pass findings render under a labeled sub-heading.
 - `validate.mjs` accepts `category` and `axis` fields on open-question entries without warning.
 - `bin/backend-design.mjs status` surfaces skeptic-finding counts alongside open gap counts.
 - `scripts/render-env-example.mjs` adds `ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`, and (for Next.js) optional `UPSTASH_REDIS_URL`.
+
+### Documentation
+- README: hosting matrix for Postgres (Neon / Supabase / Railway / Fly / RDS / local Docker) under Design Choices.
+- README: explicit `## What it doesn't do (yet)` section covering OpenAPI (v0.10.0), cookie sessions (v0.11.0), jobs/queues, WebSockets, multi-DB, and GraphQL — each with the rationale and any planned-version note.
 
 ## [0.8.0] — 2026-06-02
 
