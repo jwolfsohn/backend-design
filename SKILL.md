@@ -182,8 +182,11 @@ Give it this brief:
 > 4. Any `components.json -> shared_state.storage_keys[].key` matches `/token|jwt|auth|session/i` → `inferred_from: "token_storage_key"`
 > 5. Any endpoint in `endpoints.json` has a non-null `auth_header` → `inferred_from: "auth_header"`
 > 6. Any `screens[].data_fetches[].url` targets `/api/auth/*` → `inferred_from: "auth_path"`
+> 7. **(Judgment-call fallback.)** None of 1–6 fire AND the inventory shows at least one `forms.standalone_buttons[]` or `forms.forms[]` whose `action: "api_call"` target is **not** a public-form pattern AND the mutated target entity is **not** persisted to `localStorage` in `components.json -> shared_state.storage_keys[]`. → `inferred_from: "judgment:user_owned_mutations"`. Public-form taxonomy (which suppresses signal 7): contact, newsletter, subscribe, waitlist, feedback, support — match on slug or `submits_to` matching `/api/(contact|newsletter|subscribe|waitlist|feedback|support)`.
 >
-> When auth is implied without a UI form (signals 3–6), still emit the `users` entity, set `auth.json -> signup: true` and `auth.json -> inferred_from: "<signal-name>"`, and emit `POST /auth/signup` / `POST /auth/login` / `POST /auth/logout`. Set `triggered_by` on each auth endpoint to the file:line of the winning signal so the existing "every endpoint has a UI trigger" invariant in `validate.mjs` is satisfied. `detect-gaps.mjs` will still raise `missing_auth_ui` as a blocker — that's correct; the user needs the UI even though the backend is built.
+> When auth is implied without a UI form via **signals 3–6**, still emit the `users` entity, set `auth.json -> signup: true` and `auth.json -> inferred_from: "<signal-name>"`, and emit `POST /auth/signup` / `POST /auth/login` / `POST /auth/logout`. Set `inferred_from_signal: "<signal-name>"` on each auth endpoint (use the same value as `auth.json.inferred_from`) and leave `triggered_by: []` — the new field tells the validator the endpoint has no UI source. **Do not** point `triggered_by` at the winning signal's file:line; that fakes a UI trigger and confuses readers of the rendered design. `detect-gaps.mjs` will still raise `missing_auth_ui` as a blocker — that's correct; the user needs the UI even though the backend is built.
+>
+> When signal **7** fires (user-owned mutations but no auth surface at all), emit `users` as a **placeholder shape** only: `id`, `created_at`, `updated_at`, optional `email` (`required: false`), and a `note` field on the entity describing the placeholder state (e.g. `"note": "placeholder — no auth surface; add password_hash and required email when wiring login"`). No `password_hash` column. Set `auth.json.strategy: "none"` and `auth.json.inferred_from: "judgment:user_owned_mutations"`. **Do NOT emit `POST /auth/signup` / `/login` / `/logout`** — v1 ships anonymously; emitting auth endpoints with no auth strategy spoofs an auth flow that doesn't exist. Emit `user_id` FKs as `required: false` on owned entities (e.g. nullable `user_id` on `Booking`, `Favorite`). Add a Tier-1 product-intent open question explaining the judgment call: question — "User-owned data exists but the frontend has no auth surface — promote to real auth or accept anonymous v1?"; recommendation — "Add a signup form before shipping; nullable `user_id` is forward-compat but every record will be anonymous until auth lands."
 >
 > **Best-practice columns on every entity** (in addition to `id`, `created_at`, `updated_at`):
 >
@@ -303,7 +306,7 @@ Give it this brief:
 > - `email_verification: true` → `POST /auth/verify-email` (body: `{ token }`) + `POST /auth/verify-email/resend` (auth required)
 > - Each entry in `oauth_providers` → `GET /auth/oauth/<provider>/start` + `GET /auth/oauth/<provider>/callback`
 >
-> All of these should have `auth: "none"` (the request is unauthenticated; the token in the body is the authenticator). Set `triggered_by` to the auth-surface evidence from `forms.json` (e.g. the "Forgot password" link's file:line).
+> All of these should have `auth: "none"` (the request is unauthenticated; the token in the body is the authenticator). Set `triggered_by` to the auth-surface evidence from `forms.json` (e.g. the "Forgot password" link's file:line). If no such UI element exists, leave `triggered_by: []` and set `inferred_from_signal: "<matching-signal>"` instead — same convention as signup/login/logout when inferred from signals 3–6.
 >
 > For each added endpoint, set `triggered_by` to the UI element file:line that justifies it. Add an `auth` field (`required` or `none`) to every endpoint.
 >
@@ -313,7 +316,7 @@ Give it this brief:
 > - For endpoints with no clear role gate, leave `required_role: null`. Don't speculate.
 > - Every `required_role` value must already exist in `auth.rbac_roles` — if you'd write a role that isn't there, surface it as an Open Question instead.
 >
-> **Do not invent features the UI does not imply.** Do not add admin endpoints unless an admin page exists in `screens.json`. Be skeptical of speculative endpoints.
+> **Do not invent features the UI does not imply.** Do not add admin endpoints unless an admin page exists in `screens.json`. Be skeptical of speculative endpoints. Note: signal 7 (judgment-call `users` for user-owned mutations) is **not** feature invention — it's a codified rule that emits a placeholder `users` shape and no auth endpoints. Anything beyond that placeholder still falls under this rule.
 >
 > **Placeholder endpoints (vibe-coder mode only).** If `config.json -> vibe_coder === true`, scan `forms.standalone_buttons[]` for entries with `action: "api_call"` whose target either is missing or doesn't appear in `endpoints.json`. For each such button, add a **placeholder endpoint** to `endpoints.json` with:
 >

@@ -83,6 +83,76 @@ test("validate: relationship FK pointing at a missing column errors", () => {
   }
 });
 
+test("validate: endpoint with inferred_from_signal and empty triggered_by validates clean", () => {
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "feed", file: "src/Feed.tsx", evidence: ["src/Feed.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "FeedCard" }] },
+    "endpoints.json": [
+      {
+        method: "POST",
+        path: "/api/auth/signup",
+        auth: "none",
+        triggered_by: [],
+        inferred_from_signal: "auth_required_screen",
+      },
+    ],
+  });
+  try {
+    const { errors } = validate(root);
+    const triggerErr = errors.find((e) => e.includes("no UI trigger"));
+    assert.equal(triggerErr, undefined, `inferred_from_signal must satisfy the trigger invariant: ${errors.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
+test("validate: endpoint with neither triggered_by nor is_webhook nor inferred_from_signal errors", () => {
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "feed", file: "src/Feed.tsx", evidence: ["src/Feed.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "FeedCard" }] },
+    "endpoints.json": [
+      { method: "POST", path: "/api/orphan", auth: "none", triggered_by: [] },
+    ],
+  });
+  try {
+    const { errors } = validate(root);
+    const triggerErr = errors.find((e) => e.includes("no UI trigger"));
+    assert.ok(triggerErr, `expected trigger-invariant error, got: ${errors.join("; ")}`);
+    assert.ok(triggerErr.includes("inferred_from_signal"), "error message must mention the new escape hatch");
+  } finally {
+    cleanup();
+  }
+});
+
+test("validate: endpoint with both triggered_by and inferred_from_signal validates clean", () => {
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "login", file: "src/Login.tsx", evidence: ["src/Login.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "LoginForm" }] },
+    "endpoints.json": [
+      {
+        method: "POST",
+        path: "/api/auth/login",
+        auth: "none",
+        triggered_by: ["src/Login.tsx:42"],
+        inferred_from_signal: "token_storage_key",
+      },
+    ],
+  });
+  try {
+    const { errors } = validate(root);
+    const triggerErr = errors.find((e) => e.includes("no UI trigger"));
+    assert.equal(triggerErr, undefined, `both fields together must validate clean: ${errors.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
 test("validate: missing .backend-design/state/ directory returns a clear error", () => {
   const root = mkdtempSync(join(tmpdir(), "bd-validate-empty-"));
   try {

@@ -116,6 +116,9 @@ function buildOperation(ep, state) {
   if (ep.required_role) {
     op["x-required-role"] = Array.isArray(ep.required_role) ? ep.required_role : [ep.required_role];
   }
+  if (ep.inferred_from_signal) {
+    op["x-inferred-from-signal"] = ep.inferred_from_signal;
+  }
   return op;
 }
 

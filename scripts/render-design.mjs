@@ -204,10 +204,14 @@ function endpointsSection(state) {
     const role = ep.required_role ? ` (role: ${fmtRole(ep.required_role)})` : "";
     const body = ep.request_body && Object.keys(ep.request_body).length ? "`" + Object.keys(ep.request_body).join(", ") + "`" : "—";
     const response = ep.response ? "`" + (typeof ep.response === "string" ? ep.response : JSON.stringify(ep.response)) + "`" : "—";
-    const trig = (ep.triggered_by ?? []).slice(0, 2).join(", ") || (ep.is_webhook ? `webhook (${ep.webhook_source ?? "?"})` : "—");
+    const trig = (ep.triggered_by ?? []).slice(0, 2).join(", ")
+      || (ep.is_webhook ? `webhook (${ep.webhook_source ?? "?"})` : null)
+      || (ep.inferred_from_signal ? `inferred from \`${ep.inferred_from_signal}\` (no UI)` : null)
+      || "—";
     const flags = [];
     if (ep.temporary) flags.push("⚠ placeholder");
     if (ep.is_webhook) flags.push("webhook");
+    if (ep.inferred_from_signal) flags.push("inferred");
     if (ep.content_type === "multipart/form-data") flags.push("multipart");
     const methodCell = flags.length ? `\`${method}\`<br>_${flags.join(", ")}_` : `\`${method}\``;
     out.push(`| ${methodCell} | \`${path}\` | ${auth}${role} | ${body} | ${response} | ${trig} |`);

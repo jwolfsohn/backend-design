@@ -5,6 +5,7 @@ You are reviewing a backend design produced by the synthesis agent. Read `.backe
 - POST/PATCH/DELETE endpoints with no declared rate limit when the global rate limit is loose — suggest tighter limits on destructive routes.
 - Entity fields named `email`, `phone`, `ssn`, `dob`, `address` exposed in list endpoints with `auth: "none"` — PII exposure.
 - Auth-required endpoints whose `triggered_by` is a clearly public screen.
+- Auth endpoints whose `inferred_from_signal` doesn't match `auth.json.inferred_from` — sign that the auth path is mis-categorized (e.g. endpoint says `auth_path` but `auth.json` says `token_storage_key`).
 
 **Scalability & data integrity**
 - List endpoints with `filterable_fields` or `sortable_fields` where the target entity has no matching `indexes` entry covering those columns.

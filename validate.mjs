@@ -90,8 +90,8 @@ export function validate(cwd = process.cwd()) {
       continue;
     }
 
-    if (!ep.triggered_by?.length && !ep.is_webhook) {
-      errors.push(`Endpoint ${key} has no UI trigger — frontend is the source of truth (set is_webhook:true if this is an incoming webhook)`);
+    if (!ep.triggered_by?.length && !ep.is_webhook && !ep.inferred_from_signal) {
+      errors.push(`Endpoint ${key} has no UI trigger — frontend is the source of truth (set is_webhook:true for incoming webhooks, or inferred_from_signal:"<name>" when the endpoint was inferred from a non-UI signal like auth_required_screen, token_storage_key, auth_header, auth_path)`);
     }
     if (!isPhase1Only && !("auth" in ep)) {
       errors.push(`Endpoint ${key} is missing 'auth' field (expected 'required' or 'none')`);

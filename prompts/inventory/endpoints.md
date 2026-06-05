@@ -42,4 +42,20 @@ Strategies: `"cursor"` (infinite scroll, "load more" button, cursor in URL), `"o
 
 **Detect incoming webhooks.** If you find an existing server-side handler under `app/api/webhook/`, `pages/api/webhook/`, `src/routes/api/webhook/`, `app/api/webhooks/`, or any handler that reads a header matching `*-Signature` (e.g. `Stripe-Signature`, `X-Hub-Signature-256`), add a corresponding entry with `is_webhook: true`, `webhook_source: "<inferred-source>"` (stripe, github, etc., from path or signature header), `signature_header: "<exact header name>"`, and `triggered_by: []` (webhooks are not triggered by the UI). Include these in `endpoints.json` so codegen scaffolds the signature verification.
 
+**Endpoints inferred from non-UI signals.** When an endpoint exists in the design because the inventory inferred it from a non-UI signal — not because the UI calls it — set `inferred_from_signal: "<signal-name>"` and leave `triggered_by: []`. This is the auth-endpoint convention when `auth.json.inferred_from` is `auth_required_screen`, `token_storage_key`, `auth_header`, or `auth_path` (see SKILL.md auth signals 3–6). Signal names match the `auth.json.inferred_from` vocabulary. Example:
+
+```json
+{
+  "method": "POST",
+  "path": "/api/auth/signup",
+  "auth": "none",
+  "request_body": { "email": "string", "password": "string" },
+  "response": "User",
+  "triggered_by": [],
+  "inferred_from_signal": "auth_required_screen"
+}
+```
+
+The `inferred_from_signal` field satisfies the validator's "every endpoint has a UI trigger" invariant the same way `is_webhook: true` does for webhooks. Use it instead of pointing `triggered_by` at a signal's file:line — the latter fakes a UI trigger and misleads readers of the rendered design.
+
 Resolve template literals and path params where possible. If a Next.js API route handler already exists, set `existing_handler` to its file path so it's not duplicated. Do not output markdown — only the JSON file.
