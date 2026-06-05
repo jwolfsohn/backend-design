@@ -12,7 +12,7 @@ Packaging and onboarding polish — README restructure, install flow collapse, b
 
 ### Added
 - **Auto-registered skill on first `start`.** `npx backend-design start` now checks `~/.claude/skills/backend-design` at the top of the command and silently symlinks the package into place if it isn't there. New users go from four copy-pastes (`npm i -g`, `backend-design install`, `cd`, `start`) to two (`cd`, `npx backend-design start`). The `install` command is preserved as an explicit opt-in for durable installs that survive npx cache eviction.
-- **`docs/banner.svg`** — pixel-art project banner. Bundled in the published tarball so it renders on the npm package page, not just GitHub.
+- **`docs/banner.png`** — pixel-art project banner (1600×400, 2× retina, ~27 kB). Bundled in the published tarball so it renders on the npm package page, not just GitHub.
 - **README badges** (npm version, monthly downloads, Node engine, MIT license) under the banner.
 
 ### Changed
