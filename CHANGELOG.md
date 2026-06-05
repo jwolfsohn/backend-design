@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-06-05
+
+Scopes the auto-install to the project you're scaffolding for instead of the global skills directory.
+
 ### Changed
 - **Auto-install is now project-local, not global.** `npx backend-design start` symlinks the skill into `<cwd>/.claude/skills/backend-design` on first run instead of `~/.claude/skills/`. The skill is scoped to the project you're scaffolding for, doesn't pollute your global skills, and is cleaned up when you `rm -rf` the project. The explicit `backend-design install` command still writes globally for users who want the skill across every project, and `ensureInstalled` checks both paths so an existing global install is honored over creating a duplicate project-local one.
 - **`uninstall` now removes both** the global symlink at `~/.claude/skills/backend-design` and any project-local one at `<cwd>/.claude/skills/backend-design`.
