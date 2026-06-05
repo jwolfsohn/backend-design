@@ -286,70 +286,82 @@ function countSourceFiles(cwd, patterns_key) {
   }
 }
 
-function skillTargetPath() {
+function globalSkillPath() {
   return join(homedir(), ".claude", "skills", "backend-design");
 }
 
-function linkSkill({ silent = false } = {}) {
+function projectSkillPath(cwd) {
+  return join(cwd, ".claude", "skills", "backend-design");
+}
+
+function linkSkillAt(target, { displayPath } = {}) {
   if (process.platform === "win32") {
     fail("Windows is not supported (the install needs symlinks + Unix tooling).");
     dim("Use WSL2 or run on macOS/Linux.");
     blank();
     process.exit(1);
   }
-  const skillsDir = join(homedir(), ".claude", "skills");
-  const target = skillTargetPath();
-  mkdirSync(skillsDir, { recursive: true });
+  mkdirSync(dirname(target), { recursive: true });
   const existed = pathExists(target);
   if (existed) unlinkSync(target);
   symlinkSync(pkgRoot, target, "dir");
-  if (!silent) {
-    if (existed) dim(`replaced existing symlink: ${target}`);
-    ok(`linked: ${pc.dim(target + " → " + pkgRoot)}`);
-  } else {
-    ok(`skill registered at ${pc.dim("~/.claude/skills/backend-design")}`);
-  }
+  const shown = displayPath ?? target;
+  if (existed) dim(`replaced existing symlink: ${shown}`);
+  ok(`linked: ${pc.dim(shown + " → " + pkgRoot)}`);
   if (pkgRoot.includes("/_npx/") || pkgRoot.includes("\\_npx\\")) {
     warn("install source is npx's cache — the symlink may break when the cache is cleared.");
     dim("For a durable install: `npm i -g backend-design && backend-design install`.");
   }
 }
 
-function ensureInstalled() {
-  if (pathExists(skillTargetPath())) return;
-  step("First-time setup — registering skill");
-  linkSkill({ silent: true });
+// "global" → already symlinked at ~/.claude/skills/backend-design (do nothing)
+// "project" → already symlinked at <cwd>/.claude/skills/backend-design (do nothing)
+// "fresh" → we just created the project-local symlink
+function ensureInstalled(cwd) {
+  if (pathExists(globalSkillPath())) return "global";
+  if (pathExists(projectSkillPath(cwd))) return "project";
+  step("First-time setup — registering skill (project-local)");
+  linkSkillAt(projectSkillPath(cwd), { displayPath: ".claude/skills/backend-design" });
+  dim("use `backend-design install` if you want it available across all projects");
   blank();
+  return "fresh";
 }
 
 async function install() {
   banner();
-  step("Installing skill into ~/.claude/skills/");
-  linkSkill();
+  step("Installing skill globally into ~/.claude/skills/");
+  linkSkillAt(globalSkillPath());
   blank();
   console.log(pc.bold("  Next steps"));
   console.log(`  ${pc.dim("1.")} ${pc.dim("cd into a frontend project (any modern framework)")}`);
   console.log(`  ${pc.dim("2.")} ${pc.cyan("backend-design start")}  ${pc.dim("# detect frontend, pick stack, write config")}`);
-  console.log(`  ${pc.dim("3.")} Restart Claude Code, then run ${pc.cyan("/backend-design")}`);
+  console.log(`  ${pc.dim("3.")} Start a Claude Code session in that directory (or restart an existing one), then run ${pc.cyan("/backend-design")}`);
   blank();
 }
 
 async function uninstall() {
   banner();
-  const target = join(homedir(), ".claude", "skills", "backend-design");
-  if (pathExists(target)) {
-    unlinkSync(target);
-    ok(`removed: ${pc.dim(target)}`);
-  } else {
-    dim("not installed");
+  const global = globalSkillPath();
+  const project = projectSkillPath(process.cwd());
+  let removed = 0;
+  if (pathExists(global)) {
+    unlinkSync(global);
+    ok(`removed global: ${pc.dim(global)}`);
+    removed++;
   }
+  if (pathExists(project)) {
+    unlinkSync(project);
+    ok(`removed project-local: ${pc.dim(project)}`);
+    removed++;
+  }
+  if (!removed) dim("not installed");
   blank();
 }
 
 async function start() {
   banner();
-  ensureInstalled();
   const cwd = process.cwd();
+  const installState = ensureInstalled(cwd);
 
   step("Checking working directory");
   const front = detectFrontend(cwd);
@@ -531,8 +543,13 @@ async function start() {
   console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
   blank();
   console.log(pc.bold("  Next step"));
-  console.log(`  Open Claude Code in this directory and run ${pc.cyan("/backend-design")}`);
-  console.log(`  ${pc.dim("(or just say: 'build a backend for this frontend')")}`);
+  if (installState === "fresh") {
+    console.log(`  The skill was just registered, so Claude Code needs a fresh session to see it.`);
+    console.log(`  ${pc.dim("• No session open here?")} Run ${pc.cyan("claude")} in this directory, then ${pc.cyan("/backend-design")}.`);
+    console.log(`  ${pc.dim("• Session already open?")} Exit it (${pc.cyan("/exit")}) and run ${pc.cyan("claude")} again — skills load at startup.`);
+  } else {
+    console.log(`  Run ${pc.cyan("/backend-design")} in Claude Code ${pc.dim("(or just say: 'build a backend for this frontend')")}`);
+  }
   blank();
 }
 
@@ -645,8 +662,8 @@ async function status() {
 function help() {
   banner();
   console.log(pc.bold("  Commands"));
-  console.log(`  ${pc.cyan("install")}    Symlink the skill into ~/.claude/skills/`);
-  console.log(`  ${pc.cyan("uninstall")}  Remove the symlink`);
+  console.log(`  ${pc.cyan("install")}    Symlink the skill globally into ~/.claude/skills/ (start auto-installs project-local on first run)`);
+  console.log(`  ${pc.cyan("uninstall")}  Remove the global and/or project-local symlink`);
   console.log(`  ${pc.cyan("start")}      Pick a stack and write .backend-design/config.json`);
   console.log(`  ${pc.cyan("validate")}   Check .backend-design/state/*.json invariants`);
   console.log(`  ${pc.cyan("gaps")}       Detect missing env vars, unwired buttons, missing auth UI`);

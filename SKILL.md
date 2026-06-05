@@ -7,7 +7,7 @@ description: Design and scaffold a backend for an existing frontend. Activate on
 
 You are about to design and scaffold a backend for an **existing frontend** in the current working directory. Supported frontends (auto-detected by the CLI): Next.js (App or Pages Router), React SPA, Vue, Nuxt, Svelte, SvelteKit, Angular 17+, Astro, SolidJS / SolidStart, Qwik, Remix / React Router v7, Gatsby, HTMX, vanilla HTML/JS. The frontend is the source of truth: every button, form, fetch call, and route in the UI implies a backend obligation. Your job is to extract those obligations, get the user's approval on the shape of the backend, and then build it in the stack they chose.
 
-**Skill root:** locate this skill's directory once at the start. It's the directory containing this `SKILL.md`. Refer to it as `<SKILL_DIR>` below — typical values are `~/.claude/skills/backend-design` (default install) or `~/.claude/plugins/.../skills/backend-design` (plugin install). Resolve all `<SKILL_DIR>/...` references against the actual location, not the literal string.
+**Skill root:** locate this skill's directory once at the start. It's the directory containing this `SKILL.md`. Refer to it as `<SKILL_DIR>` below — typical values are `<project>/.claude/skills/backend-design` (project-local install — the default for `npx backend-design start`), `~/.claude/skills/backend-design` (global install via `backend-design install`), or `~/.claude/plugins/.../skills/backend-design` (plugin install). Resolve all `<SKILL_DIR>/...` references against the actual location, not the literal string.
 
 The stack is **not fixed** — it's selected by the user via `npx backend-design start` before activating this skill, and recorded in `.backend-design/config.json`. Supported stacks:
 

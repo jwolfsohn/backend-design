@@ -27,7 +27,7 @@ Then open Claude Code in the same directory and run:
 /backend-design
 ```
 
-That's it. The skill auto-registers in `~/.claude/skills/` on first run, picks up your stack + auth choices from the `start` flow, and walks through inventory, design review, and code generation.
+That's it. The skill auto-registers project-local at `./.claude/skills/backend-design` on first run (scoped to the current project — not added to your global skills), picks up your stack + auth choices from the `start` flow, and walks through inventory, design review, and code generation. Want it available across every project? Run `backend-design install` for a global install at `~/.claude/skills/`.
 
 > See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
@@ -129,8 +129,8 @@ Owning the boundaries so you don't waste time finding out later.
 | `npx backend-design gaps` | Re-detect missing env vars, unwired buttons, missing auth UI; rewrite `backend-design-next-steps.md` |
 | `npx backend-design status` | Show phase progress, frontend signature, and open gap counts |
 | `npx backend-design reset` | Delete `.backend-design/` and the generated docs to start fresh (asks for confirmation) |
-| `npx backend-design install` | Manually symlink the skill into `~/.claude/skills/` (rarely needed — `start` does this automatically) |
-| `npx backend-design uninstall` | Remove the symlink |
+| `npx backend-design install` | Symlink the skill **globally** into `~/.claude/skills/`. Only needed if you want it available across every project — `start` auto-installs project-local at `./.claude/skills/backend-design` on first run. |
+| `npx backend-design uninstall` | Remove the global and/or project-local symlink |
 | `npx backend-design help` | Show usage |
 
 ## State files
@@ -237,9 +237,9 @@ git clone https://github.com/jwolfsohn/backend-design && cd backend-design
 node bin/backend-design.mjs install
 ```
 
-Either way you'll get `~/.claude/skills/backend-design` pointing at the package. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
+Either way you'll get `~/.claude/skills/backend-design` pointing at the package. If you have a Claude Code session open, exit (`/exit`) and re-run `claude` — skills load at session startup, not live. If you don't have a session open, just run `claude` in any project and the skill appears in the available-skills list.
 
-Uninstall: `backend-design uninstall`.
+Uninstall: `backend-design uninstall` (removes both the global symlink and any project-local one in the current directory).
 
 ## Platform support
 
