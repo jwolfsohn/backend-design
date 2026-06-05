@@ -4,6 +4,8 @@
 
 **If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `middleware/auth.ts`, `lib/jwt.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not add `JWT_SECRET` to `.env.example`. No endpoint may use the auth middleware. The validator will reject any endpoint with `auth: "required"` under this strategy.
 
+**If `auth.json.strategy === "session"`:** follow the dedicated "Cookie sessions + CSRF" section below instead of the JWT instructions. The two strategies are mutually exclusive — never wire both.
+
 Scaffold a TypeScript backend. Authoritative spec is in `.backend-design/state/`:
 
 - `entities.json` → `prisma/schema.prisma` models
@@ -79,6 +81,56 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 - **Placeholder routes (`temporary: true`)** never touch the DB — soft delete, version, and audit columns are irrelevant there.
 - **Webhook routes** (`is_webhook: true`) typically have no `req.user`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
 
+## Cookie sessions + CSRF (when `auth.strategy === "session"`)
+
+Replaces every JWT-specific instruction above. The two strategies are mutually exclusive.
+
+- **Skip** `src/middleware/auth.ts` (JWT verify), `src/lib/jwt.ts`. Generate `src/lib/session.ts` instead.
+- **Deps** to add:
+  - `express-session`, `@types/express-session`
+  - `cookie-parser`, `@types/cookie-parser`
+  - `csrf-csrf` (the maintained replacement for the deprecated `csurf`)
+  - Postgres store (default, when `auth.store === "postgres"`): `connect-pg-simple`, `@types/connect-pg-simple`. Reuses `DATABASE_URL` — no new infra.
+  - Redis store (when `auth.store === "redis"`): `connect-redis`, `redis`. Requires `REDIS_URL`.
+- **`Session` Prisma model** (when `auth.store === "postgres"`): from `entities.json -> Session`. Schema is provided by Phase 2 synthesis; do not add best-practice columns to it.
+- **Middleware order** in `src/index.ts`: security middleware → `cookieParser()` → `session(...)` → `doubleCsrfProtection` → routes.
+- **Session config:**
+  ```ts
+  app.use(session({
+    name: "sid",
+    secret: process.env.SESSION_SECRET!,
+    resave: false,
+    saveUninitialized: false,
+    rolling: true,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: Number(process.env.SESSION_MAX_AGE_DAYS ?? 7) * 24 * 60 * 60 * 1000,
+    },
+    store: /* connect-pg-simple OR connect-redis instance */,
+  }));
+  ```
+- **CSRF setup** (via `csrf-csrf`):
+  ```ts
+  const { doubleCsrfProtection, generateToken } = doubleCsrf({
+    getSecret: () => process.env.SESSION_SECRET!,
+    cookieName: "x-csrf-token",
+    cookieOptions: { httpOnly: true, secure: process.env.NODE_ENV === "production", sameSite: "lax" },
+    getTokenFromRequest: (req) => req.headers["x-csrf-token"],
+  });
+  ```
+  Mount `doubleCsrfProtection` globally. Exempt webhook routes (`is_webhook: true`) — webhooks come from a server, not a browser, and are auth-verified via signature. Mount the exemption by wrapping `doubleCsrfProtection` to bypass when `req.path` starts with a webhook path.
+- **Endpoints to generate:**
+  - `POST /auth/signup` — hash password, insert user, `req.session.regenerate(cb)`, set `req.session.userId = user.id`, return `{ user }`.
+  - `POST /auth/login` — verify password, `req.session.regenerate(cb)`, set `req.session.userId`, return `{ user }`.
+  - `POST /auth/logout` — `req.session.destroy(cb)` → 204. This entry already exists in `endpoints.json` with `triggered_by` set; implement the body.
+  - `GET /auth/csrf-token` — `res.json({ csrfToken: generateToken(req, res) })`. Add this endpoint manually if the orchestrator's `endpoints.json` doesn't already include it (the synthesis brief flags it as required when `auth.csrf.enabled`).
+- **`requireSession` middleware** (replaces the JWT middleware on every `auth: "required"` route): if `!req.session.userId` → 401. Otherwise fetch the user with `prisma.user.findUnique({ where: { id: req.session.userId } })` and attach to `req.user` so existing handler code that references `req.user.id` keeps working.
+- **Startup guard:** error and exit when `NODE_ENV === "production"` and `SESSION_SECRET` is missing. Same posture as `JWT_SECRET` under JWT.
+- **`.env.example`** additions: `SESSION_SECRET` (required), `REDIS_URL` (only when `store === "redis"`), `SESSION_MAX_AGE_DAYS` (optional, commented).
+- bcrypt password hashing is unchanged from the JWT story (cost from `auth.bcrypt_cost`).
+
 ## Security baseline (required)
 
 Generate `src/security.ts` that exports a `applySecurity(app)` function called from `src/index.ts` immediately after `express.json()` registration (but BEFORE route mounting). It must:
@@ -93,6 +145,28 @@ Add a startup guard in `src/index.ts`: if `process.env.NODE_ENV === "production"
 Dev deps: `helmet`, `express-rate-limit`, `cors`, `pino`, `pino-http`, `pino-pretty`.
 
 Document the new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`. The `render-env-example.mjs` script already covers them at the project level; the `.env.example` you write inside the generated backend should include the same vars with the same comments.
+
+## OpenAPI / Swagger UI (required)
+
+The orchestrator emits `./openapi.json` at the repo root from `.backend-design/state/`. Copy it into the scaffold and serve a Swagger UI:
+
+1. Copy `<repo-root>/openapi.json` → `backend/src/openapi.json` at codegen time. The file is the source of truth; do NOT hand-edit it (re-run `node <SKILL_DIR>/scripts/render-openapi.mjs` after design changes).
+2. Add deps: `swagger-ui-express`, `@types/swagger-ui-express`.
+3. In `src/index.ts`, after security middleware but **before** route mounts, register the docs route:
+   ```ts
+   import swaggerUi from "swagger-ui-express";
+   import openapiDoc from "./openapi.json" with { type: "json" };
+
+   const docsHandlers = [swaggerUi.serve, swaggerUi.setup(openapiDoc)];
+   if (process.env.NODE_ENV === "production" && !process.env.OPENAPI_PUBLIC) {
+     app.use("/docs", requireAuth, ...docsHandlers); // requireAuth = the JWT middleware
+   } else {
+     app.use("/docs", ...docsHandlers);
+   }
+   ```
+4. Document `OPENAPI_PUBLIC` in `.env.example` (commented out; setting it to `1` in production exposes `/docs` without auth — opt-in only).
+
+Skip this section entirely when `auth.strategy === "none"` *and* there are zero endpoints — there's nothing to document.
 
 ## Tests (required)
 
@@ -111,8 +185,8 @@ Files:
 
 - **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`. Single fork avoids two containers racing for migrations.
 - **`tests/setup.ts`** — `globalSetup` hook: starts a `PostgreSqlContainer`, exports `process.env.DATABASE_URL = container.getConnectionUri()`, runs `npx prisma migrate deploy` against it via `execSync`, returns a teardown that stops the container.
-- **`tests/helpers.ts`** — exports `prisma` (a fresh `PrismaClient`), `app` (the Express app, importable for supertest), `truncateAll()` that issues `TRUNCATE TABLE <each table> RESTART IDENTITY CASCADE` (loop over `Object.keys(prisma)` for model names — Prisma provides a `_models` introspection on the client), and `createUserAndLogin()` which signs up a fixture user and returns `{ user, token, headers: { Authorization: 'Bearer ' + token } }`.
-- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Tests: signup returns 201 with a token; login returns 200 with a token; missing/invalid token → 401 on any protected route; valid token → 200.
+- **`tests/helpers.ts`** — exports `prisma` (a fresh `PrismaClient`), `app` (the Express app, importable for supertest), `truncateAll()` that issues `TRUNCATE TABLE <each table> RESTART IDENTITY CASCADE` (loop over `Object.keys(prisma)` for model names — Prisma provides a `_models` introspection on the client), and `createUserAndLogin()`. The helper's return shape branches on `auth.strategy`: for `jwt`, `{ user, token, headers: { Authorization: 'Bearer ' + token } }`; for `session`, `{ user, agent: request.agent(app), csrfToken, headers: { "X-CSRF-Token": csrfToken } }` where `agent` is supertest's persistent-cookie agent and `csrfToken` is fetched once via `agent.get('/auth/csrf-token')`.
+- **`tests/auth.test.ts`** — when `auth.json.strategy === "jwt"`: signup returns 201 with a token; login returns 200 with a token; missing/invalid token → 401 on any protected route; valid token → 200. When `auth.json.strategy === "session"`: signup returns 201 and sets a `Set-Cookie: sid=...` header; a subsequent request reusing the cookie is authenticated (200); logout (`POST /auth/logout`) returns 204 and the same cookie afterwards returns 401; a POST to any mutating route without `X-CSRF-Token` returns 403; with the right token (fetched from `GET /auth/csrf-token`) returns 200/201.
 - **`tests/<resource>.test.ts`** — one per non-auth scaffolded resource. For each: list returns `[]` initially; POST creates a row, returns 201 with `version: 1` and (when auth is on) `created_by === user.id`; PATCH with `If-Match: 1` increments to 2 and returns the new value; PATCH again with `If-Match: 1` returns 409 with `current_version`; DELETE returns 204; subsequent list excludes the deleted row.
 - Each test file `beforeEach(truncateAll)` for full isolation.
 

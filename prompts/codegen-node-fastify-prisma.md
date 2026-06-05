@@ -4,6 +4,8 @@
 
 **If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `plugins/auth.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not register `@fastify/jwt`. Do not add `JWT_SECRET` to `.env.example`. No endpoint may use `preHandler: [fastify.authenticate]`.
 
+**If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT instructions. The two strategies are mutually exclusive.
+
 Scaffold a TypeScript backend. Authoritative spec is in `.backend-design/state/`:
 
 - `entities.json` → `prisma/schema.prisma` models
@@ -66,6 +68,40 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 - **Placeholder routes (`temporary: true`)** never touch the DB.
 - **Webhook routes** typically have no `request.user`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
 
+## Cookie sessions + CSRF (when `auth.strategy === "session"`)
+
+Replaces the JWT instructions above. Mutually exclusive with `jwt`.
+
+- **Skip** `@fastify/jwt`. Register `@fastify/cookie` + `@fastify/session` + `@fastify/csrf-protection` instead.
+- **Deps:** `@fastify/cookie`, `@fastify/session`, `@fastify/csrf-protection`. Postgres store (default): `connect-pg-simple` adapted to `@fastify/session`'s store interface (it accepts any `express-session`-compatible store, so the same adapter works). Redis store: `connect-redis` + `redis`.
+- **`Session` Prisma model** when `auth.store === "postgres"` (from `entities.json`).
+- **Registration order** in `src/index.ts`: security plugins → `@fastify/cookie` → `@fastify/session` (with the store) → `@fastify/csrf-protection` → routes.
+- **Session config:**
+  ```ts
+  await fastify.register(fastifySession, {
+    cookieName: "sid",
+    secret: process.env.SESSION_SECRET!,
+    rolling: true,
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: Number(process.env.SESSION_MAX_AGE_DAYS ?? 7) * 24 * 60 * 60 * 1000,
+    },
+    store: /* connect-pg-simple OR connect-redis */,
+    saveUninitialized: false,
+  });
+  ```
+- **CSRF:** `@fastify/csrf-protection` adds `fastify.csrfProtection` (`preHandler` factory) and `request.generateCsrf()`. Apply `preHandler: [fastify.csrfProtection]` on every mutating route (POST/PATCH/PUT/DELETE) **except** webhooks (`is_webhook: true`).
+- **Endpoints to generate:**
+  - `POST /auth/signup` — hash password, insert user, `request.session.regenerate()`, set `request.session.userId = user.id`, return `{ user }`.
+  - `POST /auth/login` — verify password, `request.session.regenerate()`, set `userId`, return `{ user }`.
+  - `POST /auth/logout` — `await request.session.destroy()` → 204.
+  - `GET /auth/csrf-token` — `return { csrfToken: await reply.generateCsrf() }`.
+- **`requireSession` preHandler** (replaces `fastify.authenticate`): if `!request.session.userId` → 401. Otherwise fetch user once and decorate `request.user`.
+- **Startup guard:** error and exit on missing `SESSION_SECRET` in production.
+- **`.env.example`:** add `SESSION_SECRET`, `REDIS_URL` (only when `store === "redis"`), `SESSION_MAX_AGE_DAYS` (optional, commented).
+
 ## Security baseline (required)
 
 Register these plugins from `src/index.ts` (after `@fastify/cors`, before route mounts):
@@ -80,6 +116,30 @@ Startup guard in `src/index.ts`: if `process.env.NODE_ENV === "production"` and 
 Dev deps: `@fastify/helmet`, `@fastify/rate-limit`, `@fastify/cors`, `pino-pretty`.
 
 Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`.
+
+## OpenAPI / Swagger UI (required)
+
+The orchestrator emits `./openapi.json` at the repo root from `.backend-design/state/`. Serve it via `@fastify/swagger` in **static mode** so the UI matches the design-time contract exactly (Fastify can also derive from per-route JSON schemas, but that live spec drifts whenever a developer tweaks a handler — keep `static` for parity).
+
+1. Copy `<repo-root>/openapi.json` → `backend/src/openapi.json` at codegen time.
+2. Add deps: `@fastify/swagger`, `@fastify/swagger-ui`.
+3. In `src/index.ts`, after `@fastify/cors` and the security plugins, before routes:
+   ```ts
+   import fastifySwagger from "@fastify/swagger";
+   import fastifySwaggerUi from "@fastify/swagger-ui";
+   import openapiDoc from "./openapi.json" with { type: "json" };
+
+   await fastify.register(fastifySwagger, { mode: "static", specification: { document: openapiDoc } });
+   await fastify.register(fastifySwaggerUi, {
+     routePrefix: "/docs",
+     uiHooks: process.env.NODE_ENV === "production" && !process.env.OPENAPI_PUBLIC
+       ? { onRequest: [fastify.authenticate] }
+       : undefined,
+   });
+   ```
+4. Document `OPENAPI_PUBLIC` in `.env.example` (commented out; default behavior gates `/docs` behind auth in production).
+
+Skip when `auth.strategy === "none"` and there are zero endpoints.
 
 ## Tests (required)
 
@@ -99,7 +159,7 @@ Files:
 - **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`.
 - **`tests/setup.ts`** — starts `PostgreSqlContainer`, sets `process.env.DATABASE_URL`, runs `npx prisma migrate deploy`, returns teardown.
 - **`tests/helpers.ts`** — exports `buildApp()` (factory returning a fresh Fastify instance built the same way as `src/index.ts`), `prisma`, `truncateAll()`, and `createUserAndLogin(app)` that calls `app.inject({ method: "POST", url: "/auth/signup", ... })` and returns `{ user, token, headers }`.
-- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Same shape as the Express stack.
+- **`tests/auth.test.ts`** — under `auth.json.strategy === "jwt"`, same shape as the Express stack. Under `strategy === "session"`, use Fastify's `app.inject` and pass `headers.cookie` from the prior response's `set-cookie`: signup sets `sid=...`; reusing the cookie authenticates; `POST /auth/logout` clears it (next request → 401); mutating route without `X-CSRF-Token` → 403; with the right token → 200/201.
 - **`tests/<resource>.test.ts`** — one per non-auth scaffolded resource. Use `app.inject` for every request. Cover: list-empty, create with `version: 1`, PATCH with `If-Match: 1` → 2, stale `If-Match` → 409, DELETE → 204, soft-delete excluded from subsequent list.
 - `beforeEach(truncateAll)` for isolation.
 

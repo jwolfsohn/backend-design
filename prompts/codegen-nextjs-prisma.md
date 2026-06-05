@@ -4,6 +4,8 @@ Scaffold backend code **inside the existing Next.js project** (do not create a s
 
 **If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `lib/auth.ts`, `lib/password.ts`, the `app/api/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not add `JWT_SECRET` to `.env.example`. Protected handlers should not exist (every endpoint should have `auth: "none"` already, post-Phase-2).
 
+**If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
+
 Authoritative spec is in `.backend-design/state/`:
 
 - `entities.json` → `prisma/schema.prisma` models
@@ -85,6 +87,52 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 
 Collapse same-path different-method endpoints into one `route.ts` file with multiple exported functions.
 
+## Cookie sessions + CSRF (when `auth.strategy === "session"`)
+
+Replaces JWT-specific instructions above. Mutually exclusive with `jwt`.
+
+- **Skip** `lib/auth.ts`'s JWT verify/sign helpers (`jose`). Generate `lib/session.ts` instead.
+- **Deps:** `iron-session` (Next.js's de facto session library — works in Edge and Node runtimes, no jose-vs-jsonwebtoken footgun).
+- **`Session` Prisma model** when `auth.store === "postgres"` (from `entities.json`). When `auth.store === "redis"`, install `redis` and wire a thin adapter at `lib/session-store-redis.ts`.
+- **Session config** in `lib/session.ts`:
+  ```ts
+  import { getIronSession } from "iron-session";
+  export type SessionData = { userId?: string };
+  export const sessionOptions = {
+    password: process.env.SESSION_SECRET!,
+    cookieName: "sid",
+    cookieOptions: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax" as const,
+      maxAge: Number(process.env.SESSION_MAX_AGE_DAYS ?? 7) * 24 * 60 * 60,
+    },
+  };
+  export async function getSession() {
+    return getIronSession<SessionData>(await cookies(), sessionOptions);
+  }
+  ```
+  When `auth.store !== "cookie"`, store only `{ sid }` in the cookie and look up the session blob from Postgres/Redis using the `Session` table; cap cookie size below 4 KB even with encryption overhead.
+- **CSRF:** `iron-session` does not ship a CSRF middleware. Add `lib/csrf.ts` implementing the double-submit cookie pattern:
+  ```ts
+  export async function requireCsrfToken(request: Request) {
+    const header = request.headers.get("x-csrf-token");
+    const cookie = (await cookies()).get("csrf")?.value;
+    if (!header || !cookie || header !== cookie) {
+      throw new Response(JSON.stringify({ error: "csrf_invalid" }), { status: 403 });
+    }
+  }
+  ```
+  Call `await requireCsrfToken(request)` at the top of every mutating handler (POST/PATCH/DELETE) **except** webhooks. Also extend `middleware.ts` to set a `csrf` cookie (random 32 bytes hex) for any request that doesn't have one yet.
+- **Endpoints to generate:**
+  - `POST /api/auth/signup` — hash, insert, `session.userId = user.id; await session.save();`, return user JSON.
+  - `POST /api/auth/login` — verify, set userId, save, return user.
+  - `POST /api/auth/logout` — `session.destroy(); return new Response(null, { status: 204 })`.
+  - `GET /api/auth/csrf-token` — returns the current `csrf` cookie value as `{ csrfToken }`. Also `Set-Cookie: csrf=...` if missing.
+- **`getCurrentUser()`** (replaces JWT version): reads `session.userId`, fetches the user row, returns it or null. Mutating routes still call `requireCsrfToken()` first, then `getCurrentUser()`; non-mutating routes call only `getCurrentUser()`.
+- **Startup guard** in `lib/db.ts`: throw at module load when `NODE_ENV === "production"` and `SESSION_SECRET` is missing.
+- **`.env.example.add`:** add `SESSION_SECRET`, `REDIS_URL` (only when `store === "redis"`), `SESSION_MAX_AGE_DAYS` (optional, commented).
+
 ## Security baseline (required)
 
 Add `middleware.ts` at the project root (Next.js convention) that:
@@ -102,6 +150,27 @@ Dev deps to add: `@upstash/ratelimit` (optional, gated on the env var).
 Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`, `UPSTASH_REDIS_URL`) in `.env.example` (or `.env.example.add` per the existing file-preservation rule).
 
 Logging: use the platform default (Next.js / Vercel auto-collects stdout). Document `LOG_LEVEL` in `BACKEND_SETUP.md` even though there's no logger library — handlers should `console.log({ level, msg, ...ctx })` in JSON so log aggregators can parse.
+
+## OpenAPI / Swagger UI (required)
+
+The orchestrator emits `./openapi.json` at the repo root. Serve it from `public/` and add a docs page:
+
+1. Copy `<repo-root>/openapi.json` → `public/openapi.json` at codegen time (Next.js serves files under `public/` as static assets at the URL of the same name → `/openapi.json`).
+2. Add deps: `swagger-ui-react`, `@types/swagger-ui-react`.
+3. Create `app/api-docs/page.tsx` (avoid `app/docs/...` so it doesn't collide with any existing docs route):
+   ```tsx
+   "use client";
+   import "swagger-ui-react/swagger-ui.css";
+   import SwaggerUI from "swagger-ui-react";
+   export const dynamic = "force-dynamic";
+   export default function ApiDocsPage() {
+     return <SwaggerUI url="/openapi.json" />;
+   }
+   ```
+4. **Gate in production.** When `auth.strategy === "jwt"`, also create `app/api-docs/layout.tsx` that calls `getCurrentUser()` from `lib/auth.ts` and `redirect("/login")` when `process.env.NODE_ENV === "production"` AND `process.env.OPENAPI_PUBLIC` is unset AND the user is unauthenticated.
+5. Document `OPENAPI_PUBLIC` in `.env.example.add` (commented out; default = require auth in production).
+
+Skip when `auth.strategy === "none"` and there are zero endpoints. If `app/api-docs/page.tsx` already exists (user-authored), write `app/api-docs/page.generated.tsx` per the existing never-overwrite rule.
 
 ## Tests (required)
 
@@ -121,7 +190,7 @@ Files:
 - **`vitest.config.ts`** — `globals: true`, `testTimeout: 30000`, `globalSetup: ["./tests/setup.ts"]`, `pool: "forks"`, `poolOptions: { forks: { singleFork: true } }`.
 - **`tests/setup.ts`** — starts `PostgreSqlContainer`, sets `process.env.DATABASE_URL`, runs `npx prisma migrate deploy`. Also sets `process.env.JWT_SECRET = "test-secret"` so `lib/auth.ts` works.
 - **`tests/helpers.ts`** — exports `prisma`, `truncateAll()`, and `signupAndLogin()` that imports `POST` from `app/api/auth/signup/route.ts` and `app/api/auth/login/route.ts`, invokes them with a `new Request(...)`, and returns `{ user, token }`.
-- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Import the auth route handlers directly, invoke with `new Request("http://test/api/auth/signup", { method: "POST", body: JSON.stringify({ email, password }), headers: { "content-type": "application/json" } })`. Assert response shape.
+- **`tests/auth.test.ts`** — under `auth.json.strategy === "jwt"`, import the auth route handlers directly, invoke with `new Request("http://test/api/auth/signup", { method: "POST", body: JSON.stringify({ email, password }), headers: { "content-type": "application/json" } })`. Assert response shape. Under `strategy === "session"`: capture the `set-cookie` header from the signup response, replay it as `cookie:` on the next request to assert authenticated access; assert logout clears it; assert mutating routes without `X-CSRF-Token` → 403 and with the right token → 200/201. Mock `cookies()` from `next/headers` with `vi.mock("next/headers", ...)` so iron-session can read/write during tests.
 - **`tests/<resource>.test.ts`** — one per non-auth resource. Import the route handlers, invoke with hand-built `Request` objects. For routes with `[id]`, pass the `{ params: { id } }` second argument: `await GET(req, { params: Promise.resolve({ id: "..." }) })` (Next.js 15+ async params).
 - `beforeEach(truncateAll)`.
 

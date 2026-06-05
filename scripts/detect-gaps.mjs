@@ -114,6 +114,27 @@ function detectMissingEnvVars(state, config, env) {
     }
   }
 
+  if (auth?.strategy === "session") {
+    if (!env.has("SESSION_SECRET")) {
+      gaps.push({
+        type: "missing_env_var",
+        specifier: "SESSION_SECRET",
+        severity: "blocker",
+        what: "SESSION_SECRET is not set in .env",
+        evidence: [".env"],
+      });
+    }
+    if (auth.store === "redis" && !env.has("REDIS_URL")) {
+      gaps.push({
+        type: "missing_env_var",
+        specifier: "REDIS_URL",
+        severity: "blocker",
+        what: "REDIS_URL is not set in .env (auth.store is 'redis')",
+        evidence: [".env"],
+      });
+    }
+  }
+
   // Per-source webhook secrets (stripe, github, etc.). Source name is inferred at Phase 1.
   const webhookSources = new Set();
   for (const ep of endpoints) {

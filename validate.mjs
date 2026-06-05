@@ -182,15 +182,43 @@ export function validate(cwd = process.cwd()) {
   }
 
   const authEntityName = findAuthEntityName(entityByName, authSurface, auth);
+
+  // Auth strategy/store invariants (jwt | session | none). Session strategy must also declare a
+  // store so codegen knows whether to add a Session entity (Postgres) or wire Redis.
+  if (auth?.strategy && !["jwt", "session", "none"].includes(auth.strategy)) {
+    errors.push(`auth.strategy '${auth.strategy}' is invalid (expected 'jwt', 'session', or 'none')`);
+  }
+  if (auth?.strategy === "session") {
+    if (!auth.store) {
+      errors.push("auth.strategy is 'session' but auth.store is missing (expected 'postgres' or 'redis')");
+    } else if (!["postgres", "redis"].includes(auth.store)) {
+      errors.push(`auth.store '${auth.store}' is invalid for strategy 'session' (expected 'postgres' or 'redis')`);
+    }
+    const hasSession = entityByName.has("Session");
+    if (auth.store === "postgres" && entities.length && !hasSession) {
+      errors.push("auth.strategy is 'session' with store 'postgres' but no 'Session' entity is declared in entities.json");
+    }
+    if (auth.store === "redis" && hasSession) {
+      errors.push("auth.store is 'redis' but a 'Session' entity is declared — redis-backed sessions don't use a DB table");
+    }
+  } else if (auth?.store) {
+    warnings.push(`auth.store is set ('${auth.store}') but strategy is '${auth.strategy}' — only the 'session' strategy uses a store`);
+  }
+
+  // Entities exempt from "is this displayed on a screen" and "best-practice columns" warnings.
+  // Session rows are server-managed: they have no UI surface and aren't user-authored.
+  const exemptEntities = new Set([authEntityName, "Session"].filter(Boolean));
+
   const displayedEntities = new Set(screens.flatMap((s) => s.entities_displayed ?? []));
   for (const ent of entities) {
-    if (ent.name === authEntityName) continue;
+    if (exemptEntities.has(ent.name)) continue;
     if (!displayedEntities.has(ent.name)) {
       warnings.push(`Entity ${ent.name} is not displayed on any screen — confirm it's needed`);
     }
   }
 
   for (const ent of entities) {
+    if (exemptEntities.has(ent.name)) continue;
     const slug = ent.name.toLowerCase();
     const plural = pluralize(slug);
     const segRegex = new RegExp(`(^|/)(${slug}|${plural})(/|$)`);
@@ -243,7 +271,7 @@ export function validate(cwd = process.cwd()) {
 
   if (authEntityName && entities.length) {
     for (const ent of entities) {
-      if (ent.name === authEntityName) continue;
+      if (exemptEntities.has(ent.name)) continue;
       const names = new Set((ent.fields ?? []).map((f) => f.name));
       const missing = [];
       if (!names.has("deleted_at")) missing.push("deleted_at");

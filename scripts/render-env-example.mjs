@@ -85,6 +85,27 @@ function buildSections(state, config) {
       ],
     });
   }
+  if (auth?.strategy === "session") {
+    const vars = [
+      {
+        name: "SESSION_SECRET",
+        comment: "Session cookie signing/encryption secret. Generate with: openssl rand -base64 32",
+      },
+    ];
+    if (auth.store === "redis") {
+      vars.push({
+        name: "REDIS_URL",
+        comment: "Redis connection URL (e.g. redis://localhost:6379). Required because auth.store is 'redis'.",
+      });
+    }
+    vars.push({
+      name: "SESSION_MAX_AGE_DAYS",
+      comment: "Session cookie max-age in days. Optional — defaults to 7.",
+      default: "7",
+      commented: true,
+    });
+    sections.push({ title: "Sessions", vars });
+  }
 
   // Webhooks (per source)
   const webhookSources = new Set();

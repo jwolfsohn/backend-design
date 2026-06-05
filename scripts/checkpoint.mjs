@@ -210,6 +210,14 @@ export function printStatus(cwd = process.cwd()) {
     console.log();
   }
 
+  const openapi = loadJson(join(cwd, "openapi.json"));
+  if (openapi && openapi.paths) {
+    const paths = Object.keys(openapi.paths).length;
+    const webhooks = Object.keys(openapi.webhooks ?? {}).length;
+    console.log(`OpenAPI: ./openapi.json (${paths} paths, ${webhooks} webhooks)`);
+    console.log();
+  }
+
   const d = decide(cwd);
   console.log(`Next: ${d.reason}`);
   return 0;

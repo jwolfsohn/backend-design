@@ -4,6 +4,8 @@
 
 **If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `middleware/auth.ts`, `lib/jwt.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not add `JWT_SECRET` to `.env.example`. No route may read `c.get('user')`.
 
+**If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
+
 Scaffold a TypeScript backend. Authoritative spec is in `.backend-design/state/`:
 
 - `entities.json` → `src/db/schema.ts` Drizzle table definitions
@@ -76,6 +78,37 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 - **Placeholder routes (`temporary: true`)** never touch the DB.
 - **Webhook routes** typically have no `c.get('user')`; if their write targets entities with audit columns, leave `created_by`/`updated_by` as NULL.
 
+## Cookie sessions + CSRF (when `auth.strategy === "session"`)
+
+Replaces JWT instructions above. Mutually exclusive with `jwt`.
+
+- **Skip** `lib/jwt.ts`, `middleware/auth.ts`. Generate `lib/session.ts` instead.
+- **Deps:** `hono-sessions` (Hono session middleware). Postgres store: `hono-sessions` ships a memory store by default; write a thin adapter at `lib/session-pg-store.ts` (~40 lines using `postgres` driver) implementing `get(sid)`, `set(sid, data)`, `destroy(sid)` against the `Session` Drizzle table. Redis store: write a sibling adapter against `redis`.
+- **`Session` Drizzle table** (when `auth.store === "postgres"`) — from `entities.json -> Session`. Use the same `pgTable()` patterns as other entities.
+- **CSRF:** use `csrf` from `hono/csrf` — Hono's built-in CSRF middleware (compares Origin/Referer against the host by default). Apply on the root app **after** session middleware and **before** route mounts. Exempt webhooks via `csrf({ origin: (origin, c) => c.req.path.startsWith("/webhooks/") ? true : matchOrigin(origin) })`.
+- **Endpoints to generate:**
+  - `POST /auth/signup` — hash password, insert user, `session.set("userId", user.id)` then `session.flash()` (regenerate), return `{ user }`.
+  - `POST /auth/login` — same flow.
+  - `POST /auth/logout` — `session.deleteSession()` → 204.
+  - `GET /auth/csrf-token` — Hono's CSRF middleware uses Origin checking, not token issuance, so this endpoint is **not required**. Document that the frontend should rely on Origin headers (browser-set) rather than fetching a token. Add the endpoint anyway returning a stub token if `endpoints.json` declares it, to keep the contract stable across stacks.
+- **`requireSession` middleware** (replaces JWT middleware): `const userId = c.get("session").get("userId"); if (!userId) return c.json({error:"unauthorized"}, 401);` then fetch the user via Drizzle and `c.set("user", user)`.
+- **Session config:**
+  ```ts
+  app.use(sessionMiddleware({
+    store: pgStore,
+    encryptionKey: process.env.SESSION_SECRET!,
+    cookieOptions: {
+      sameSite: "Lax",
+      path: "/",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: Number(process.env.SESSION_MAX_AGE_DAYS ?? 7) * 24 * 60 * 60,
+    },
+  }));
+  ```
+- **Startup guard:** error and exit on missing `SESSION_SECRET` in production.
+- **`.env.example`:** add `SESSION_SECRET`, `REDIS_URL` (only when `store === "redis"`), `SESSION_MAX_AGE_DAYS` (optional, commented).
+
 ## Security baseline (required)
 
 In `src/index.ts`, apply these middlewares to the root Hono app (before route mounts):
@@ -90,6 +123,31 @@ Startup guard at the top of `src/index.ts`: if `process.env.NODE_ENV === "produc
 Dev deps: `hono-rate-limiter`.
 
 Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`.
+
+## OpenAPI / Swagger UI (required)
+
+The orchestrator emits `./openapi.json` at the repo root. Two options exist: (a) rewrite route files as `OpenAPIHono` from `@hono/zod-openapi` to drive a live spec, or (b) serve the static `openapi.json` and mount a docs UI on top. **Pick (b)** — it matches the other Node stacks and keeps the diff small.
+
+1. Copy `<repo-root>/openapi.json` → `backend/src/openapi.json` at codegen time.
+2. Add dep: `@hono/swagger-ui` (or `@scalar/hono-api-reference` if you prefer Scalar's UI).
+3. In `src/index.ts`, after `secureHeaders()` / `cors()` / rate-limit, before route mounts:
+   ```ts
+   import { swaggerUI } from "@hono/swagger-ui";
+   import openapiDoc from "./openapi.json" with { type: "json" };
+
+   app.get("/openapi.json", (c) => c.json(openapiDoc));
+   const docs = swaggerUI({ url: "/openapi.json" });
+   app.get("/docs", async (c, next) => {
+     if (process.env.NODE_ENV === "production" && !process.env.OPENAPI_PUBLIC) {
+       const user = c.get("user");
+       if (!user) return c.json({ error: "unauthorized" }, 401);
+     }
+     return docs(c, next);
+   });
+   ```
+4. Document `OPENAPI_PUBLIC` in `.env.example` (commented out; default = require auth in production).
+
+Skip when `auth.strategy === "none"` and there are zero endpoints.
 
 ## Tests (required)
 
@@ -109,7 +167,7 @@ Files:
 - **`vitest.config.ts`** — same as the other Node stacks.
 - **`tests/setup.ts`** — starts `PostgreSqlContainer`, sets `process.env.DATABASE_URL`, runs `npx drizzle-kit push` (faster than migrate for tests), returns teardown.
 - **`tests/helpers.ts`** — exports the `app` (default export from `src/index.ts`), the Drizzle `db`, `truncateAll()` that loops over `Object.values(schema)` and issues `TRUNCATE`, and `createUserAndLogin()` that fetches `POST /auth/signup` via `app.fetch()` and returns `{ user, token, headers }`.
-- **`tests/auth.test.ts`** — only when `auth.json.strategy === "jwt"`. Same shape as the Express stack.
+- **`tests/auth.test.ts`** — under `auth.json.strategy === "jwt"`, same shape as the Express stack. Under `strategy === "session"`: use `app.fetch()` and thread the `set-cookie` from the prior response into `cookie:` on the next; cover signup→authenticated→logout→401 plus the CSRF reject/accept pair on a mutating route. Set the `Origin` header on every request because Hono's CSRF middleware checks origin.
 - **`tests/<resource>.test.ts`** — one per non-auth scaffolded resource. Wrap each request as `await app.fetch(new Request("http://test/posts", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...auth } }))`. Cover the same five shapes (list-empty, create with `version: 1`, PATCH-with-If-Match-1 → 2, stale-If-Match → 409, DELETE → 204).
 - `beforeEach(truncateAll)`.
 

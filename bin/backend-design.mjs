@@ -76,7 +76,25 @@ const STACKS = [
 
 const AUTH_OPTIONS = [
   { id: "jwt", label: "JWT (stateless, simple)", tagline: "Recommended for SPAs and mobile clients." },
+  {
+    id: "session",
+    label: "Cookie session (Postgres-backed, with CSRF)",
+    tagline: "Recommended for browser-only apps. Real logout, revocable, XSS-resistant when httpOnly.",
+  },
   { id: "none", label: "No auth", tagline: "Skip if the app has no users." },
+];
+
+const SESSION_STORE_OPTIONS = [
+  {
+    id: "postgres",
+    label: "Postgres (reuses DATABASE_URL — no new infra)",
+    tagline: "Default. A sessions table is added to your schema.",
+  },
+  {
+    id: "redis",
+    label: "Redis (requires REDIS_URL)",
+    tagline: "Faster, slightly more ops surface. Pick when scale demands it.",
+  },
 ];
 
 function banner() {
@@ -392,6 +410,28 @@ async function start() {
   if (!authResp.auth) process.exit(130);
   blank();
 
+  let sessionStore = null;
+  if (authResp.auth === "session") {
+    step("Session store");
+    const storeResp = await prompts(
+      {
+        type: "select",
+        name: "store",
+        message: "store",
+        choices: SESSION_STORE_OPTIONS.map((s) => ({
+          title: s.label,
+          description: s.tagline,
+          value: s.id,
+        })),
+        initial: 0,
+      },
+      { onCancel: () => process.exit(130) }
+    );
+    if (!storeResp.store) process.exit(130);
+    sessionStore = storeResp.store;
+    blank();
+  }
+
   step("Vibe-coder mode");
   const vibeResp = await prompts(
     {
@@ -447,7 +487,9 @@ async function start() {
       orm: stack.orm,
       database: stack.database,
     },
-    auth: { strategy: authResp.auth },
+    auth: sessionStore
+      ? { strategy: authResp.auth, store: sessionStore }
+      : { strategy: authResp.auth },
     vibe_coder: vibeResp.vibe_coder,
     output_dir: outDir,
     pkg_manager: pkgManager,
@@ -464,7 +506,7 @@ async function start() {
 
   console.log(pc.bold("  Summary"));
   console.log(`  ${pc.dim("stack:")}     ${stack.label}`);
-  console.log(`  ${pc.dim("auth:")}      ${authResp.auth}`);
+  console.log(`  ${pc.dim("auth:")}      ${authResp.auth}${sessionStore ? ` (store: ${sessionStore})` : ""}`);
   console.log(`  ${pc.dim("vibe:")}      ${vibeResp.vibe_coder ? "on" : "off"}`);
   console.log(`  ${pc.dim("output:")}    ${outDir}`);
   console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
@@ -482,12 +524,14 @@ async function reset() {
   const docPath = join(cwd, "backend-design.md");
   const nextStepsPath = join(cwd, "backend-design-next-steps.md");
   const envExamplePath = join(cwd, "backend-design.env.example");
+  const openapiPath = join(cwd, "openapi.json");
 
   const targets = [];
   if (existsSync(stateDir)) targets.push({ label: ".backend-design/", path: stateDir, dir: true });
   if (existsSync(docPath)) targets.push({ label: "backend-design.md", path: docPath, dir: false });
   if (existsSync(nextStepsPath)) targets.push({ label: "backend-design-next-steps.md", path: nextStepsPath, dir: false });
   if (existsSync(envExamplePath)) targets.push({ label: "backend-design.env.example", path: envExamplePath, dir: false });
+  if (existsSync(openapiPath)) targets.push({ label: "openapi.json", path: openapiPath, dir: false });
 
   if (!targets.length) {
     dim("nothing to reset (no .backend-design/ or generated docs in this directory)");
@@ -551,6 +595,16 @@ async function gaps() {
       if (rendered !== null) ok("refreshed backend-design.env.example");
     } catch (e) {
       warn(`could not refresh backend-design.env.example: ${e.message}`);
+    }
+    try {
+      const openapiMod = await import("../scripts/render-openapi.mjs");
+      const spec = openapiMod.runRender(process.cwd());
+      if (spec !== null) {
+        const s = openapiMod.summarizeSpec(spec);
+        ok(`refreshed openapi.json (${s.paths} paths, ${s.webhooks} webhooks)`);
+      }
+    } catch (e) {
+      warn(`could not refresh openapi.json: ${e.message}`);
     }
     blank();
     process.exit(exitCode);

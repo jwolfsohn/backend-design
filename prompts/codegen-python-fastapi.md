@@ -4,6 +4,8 @@
 
 **If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `app/lib/jwt.py`, `app/lib/password.py`, the `app/routers/auth.py` file, or the `User` model unless it appears in `entities.json` for a non-auth reason. Drop `python-jose` and `bcrypt` from dependencies. Do not add `JWT_SECRET` to `.env.example`. Do not include `get_current_user` in `app/deps.py`. No endpoint may use `Depends(get_current_user)`.
 
+**If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
+
 Scaffold a Python backend. Authoritative spec is in `.backend-design/state/`:
 
 - `entities.json` → SQLAlchemy models in `app/models/`
@@ -86,6 +88,37 @@ Every entity in `entities.json` carries `deleted_at`, `version`, and (when a `us
 | `boolean`          | `Mapped[bool] = mapped_column(Boolean)` |
 | `timestamptz`      | `Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())` |
 
+## Cookie sessions + CSRF (when `auth.strategy === "session"`)
+
+Replaces JWT-specific instructions above. Mutually exclusive with `jwt`.
+
+- **Skip** `app/lib/jwt.py`. Generate `app/lib/session.py` instead. Drop `python-jose` from `pyproject.toml`.
+- **Deps** to add: `starsessions` (Starlette/FastAPI session middleware). Postgres store: `starsessions-sqlalchemy` if available; otherwise write a thin custom adapter at `app/lib/session_store.py` (~50 lines) implementing `async load(session_id) -> dict` and `async write(session_id, data, ttl) -> str` against the `Session` SQLAlchemy model. Redis store: `starsessions-redis` (or a small `redis.asyncio` adapter). Also add `fastapi-csrf-protect`.
+- **`Session` SQLAlchemy model** (when `auth.store === "postgres"`) — from `entities.json`. Use `String` for `id` (session IDs are opaque strings), not `UUID`.
+- **Middleware order** in `app/main.py`: CORS → `SecurityHeadersMiddleware` → `SessionMiddleware(store=...)` → routes. CSRF runs via FastAPI dependency on each mutating route (see below).
+- **Session config:**
+  ```python
+  from starsessions import SessionMiddleware
+  app.add_middleware(
+      SessionMiddleware,
+      store=session_store,  # PostgresStore or RedisStore
+      cookie_name="sid",
+      cookie_https_only=True,
+      cookie_same_site="lax",
+      cookie_secure=os.environ.get("NODE_ENV") == "production",
+      lifetime=int(os.environ.get("SESSION_MAX_AGE_DAYS", "7")) * 86400,
+  )
+  ```
+- **CSRF:** configure `CsrfProtect` once in `app/main.py` with `CsrfSettings(secret_key=os.environ["SESSION_SECRET"], cookie_secure=...)`. Add `Depends(csrf_protect.validate_csrf)` to every mutating route — POST/PATCH/PUT/DELETE — **except** webhooks (`is_webhook: true`).
+- **Endpoints to generate** in `app/routers/auth.py`:
+  - `POST /auth/signup` — hash password, insert user, `request.session.regenerate()`, `request.session["user_id"] = str(user.id)`, return user.
+  - `POST /auth/login` — verify, regenerate, set user_id, return user.
+  - `POST /auth/logout` — `await request.session.clear()` → `Response(status_code=204)`.
+  - `GET /auth/csrf-token` — returns `{"csrfToken": csrf_protect.generate_csrf()}` and sets the corresponding cookie via the helper.
+- **`get_current_user` dependency** (replaces JWT version): reads `request.session.get("user_id")`, 401 if absent, fetches the user row, returns it.
+- **Startup event:** raise `RuntimeError` on missing `SESSION_SECRET` in production.
+- **`.env.example`:** add `SESSION_SECRET`, `REDIS_URL` (only when `store === "redis"`), `SESSION_MAX_AGE_DAYS` (optional, commented).
+
 ## Security baseline (required)
 
 In `app/main.py`, register these middlewares (order matters — CORS first, then rate limit, then security headers):
@@ -101,6 +134,28 @@ Startup event in `app/main.py`: if `os.environ.get("NODE_ENV") == "production"` 
 Add to `pyproject.toml` deps: `slowapi`, `structlog`. Remove `passlib` if previously listed (the existing brief already favors `bcrypt` directly).
 
 Document new env vars (`ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`) in `.env.example`.
+
+## OpenAPI / Swagger UI (required)
+
+FastAPI auto-generates its own OpenAPI spec from your Pydantic models and serves Swagger UI at `/docs` plus Redoc at `/redoc` out of the box. **Do not override `openapi_url` to serve the orchestrator's static file** — FastAPI's live spec is more accurate (it picks up any models or routes the developer adds after the initial scaffold). The orchestrator's static `./openapi.json` still gets written at the repo root for design-time reviewers (Stoplight, openapi-typescript, etc.) so two specs co-exist and that's intentional.
+
+Tasks for codegen:
+
+1. Document the divergence in `BACKEND_SETUP.md`:
+   > Two OpenAPI specs exist:
+   > - **`./openapi.json` (repo root)** — design-time contract emitted by backend-design from `.backend-design/state/`. Source of truth for the design doc and `npx openapi-typescript` clients.
+   > - **`http://localhost:8000/openapi.json` / `/docs` / `/redoc`** — FastAPI's runtime spec, derived from your Pydantic models. Always reflects the current code.
+   >
+   > Re-run `node <SKILL_DIR>/scripts/render-openapi.mjs` to regenerate the static file after editing the design.
+2. **Gate `/docs` and `/redoc` in production.** Add to `app/main.py`:
+   ```python
+   app = FastAPI(
+       docs_url=None if os.environ.get("NODE_ENV") == "production" and not os.environ.get("OPENAPI_PUBLIC") else "/docs",
+       redoc_url=None if os.environ.get("NODE_ENV") == "production" and not os.environ.get("OPENAPI_PUBLIC") else "/redoc",
+   )
+   ```
+   When you need them in production, set `OPENAPI_PUBLIC=1` — opt-in only. Document this env var in `.env.example`.
+3. No new dependencies.
 
 ## Tests (required)
 
@@ -119,7 +174,7 @@ testpaths = tests
 Files:
 
 - **`tests/conftest.py`** — `@pytest.fixture(scope="session")` that spins up a `PostgresContainer`, points `os.environ["DATABASE_URL"]` at it, runs `alembic upgrade head` via `subprocess.run(["alembic", "upgrade", "head"], check=True)`, and yields. Plus a function-scope `truncate` fixture that issues `TRUNCATE TABLE ... CASCADE` for every table after each test. Plus a `client` fixture yielding `TestClient(app)` from `fastapi.testclient`. Plus a `user_and_token` fixture that signs up a fixture user and returns `(user, token, {"Authorization": f"Bearer {token}"})`.
-- **`tests/test_auth.py`** — only when `auth.json.strategy === "jwt"`. Signup → 201, login → 200 with token, protected route without token → 401, with valid token → 200.
+- **`tests/test_auth.py`** — under `auth.json.strategy === "jwt"`: signup → 201, login → 200 with token, protected route without token → 401, with valid token → 200. Under `strategy === "session"`: use `TestClient(app)` (its `cookies` jar persists across calls by default); assert signup sets a `sid` cookie; reuse the client to assert protected route reachable; assert `POST /auth/logout` → 204 and next request → 401; assert mutating route without `X-CSRF-Token` → 403 and with the right token (fetched from `GET /auth/csrf-token`) → 200/201.
 - **`tests/test_<resource>.py`** — one per non-auth resource. List empty → `[]`, POST → 201 with `version: 1`, PATCH with `If-Match: 1` → 200 with `version: 2`, PATCH with stale `If-Match` → 409 with `current_version`, DELETE → 204, soft-deleted row excluded from subsequent list.
 
 Skip tests for placeholder routes and webhook routes.

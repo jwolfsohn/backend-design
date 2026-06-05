@@ -30,6 +30,29 @@ echo "JWT_SECRET=$(openssl rand -base64 32)" >> .env
 ```
 Don't share this value publicly. Don't commit `.env` (the generated `.gitignore` covers it).
 
+## missing_env_var:SESSION_SECRET
+
+**Why**: Session cookies are signed (and, for `iron-session` / `starsessions`, encrypted) with this. Without it, the server refuses to start in production (and dev sessions either fail to set the cookie or use a known-bad default that the next deploy invalidates).
+
+**How**: Generate one and paste it into `.env`:
+```bash
+echo "SESSION_SECRET=$(openssl rand -base64 32)" >> .env
+```
+Use a value ≥32 bytes. Rotate it on a security incident — every active session is invalidated. Don't commit `.env`.
+
+## missing_env_var:REDIS_URL
+
+**Why**: Your design uses `SESSION_STORE=redis` (set in `.backend-design/config.json → auth.store`), so session reads/writes hit Redis instead of Postgres. Without `REDIS_URL`, the server can't open a connection and refuses to start.
+
+**How**: Add a Redis connection URL to `.env`:
+```
+REDIS_URL=redis://localhost:6379
+```
+Don't have a Redis yet? Three quick options:
+- **Local with Docker**: `docker run -d -p 6379:6379 redis:7`, then `REDIS_URL=redis://localhost:6379`.
+- **Upstash** (free serverless tier): https://upstash.com → create database → copy the `redis://` URL.
+- **Switch back to Postgres-backed sessions** if you don't actually need Redis — edit `.backend-design/config.json` and set `auth.store` to `"postgres"`, drop the `Session` table dependency on Redis (it'll reappear via Postgres), and re-run `/backend-design`.
+
 ## missing_env_var:STRIPE_SECRET_KEY
 
 **Why**: Your design includes Stripe — the backend needs the secret key to make API calls.

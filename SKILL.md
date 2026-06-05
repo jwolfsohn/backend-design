@@ -50,7 +50,7 @@ Run **before** the pre-flight check. Decides whether to start fresh or skip ahea
    | `resume_phase_2_6` | Phase 2.5 gap detection on disk but skeptic pass not yet run. Skip Phases 1+2+2.5; proceed directly to Phase 2.6 (skeptic pass), then re-render the design doc, then Phase 3. |
    | `resume_phase_3` | Design, next-steps doc, and skeptic findings exist. Skip everything except the Phase 3 review gate — print the summary and wait for approval. |
    | `resume_phase_4` | Design approved but scaffold not generated. Skip to Phase 4 directly. |
-   | `gaps_only` | Scaffold complete, frontend unchanged. Run `node <SKILL_DIR>/scripts/detect-gaps.mjs` followed by `node <SKILL_DIR>/scripts/render-env-example.mjs` to refresh both `./backend-design-next-steps.md` and `./backend-design.env.example`. Report and stop — do not re-scaffold or re-render the design doc. |
+   | `gaps_only` | Scaffold complete, frontend unchanged. Run `node <SKILL_DIR>/scripts/detect-gaps.mjs`, then `node <SKILL_DIR>/scripts/render-env-example.mjs`, then `node <SKILL_DIR>/scripts/render-openapi.mjs` to refresh `./backend-design-next-steps.md`, `./backend-design.env.example`, and `./openapi.json`. Report and stop — do not re-scaffold or re-render the design doc. |
    | `fresh_with_gaps_preserved` | Frontend changed since the last run. Re-run from Phase 1. **Preserve** `.backend-design/gaps.json` so closure detection still works on this run. |
 
 4. **Tell the user one line of context** (echo the `reason` field): `Resuming at Phase 4 — design approved, scaffold not yet generated.` etc. For `gaps_only`, say something like `Scaffold already generated and frontend unchanged — refreshing ./backend-design-next-steps.md and ./backend-design.env.example only.` so it's clear no design or codegen work is being repeated.
@@ -193,6 +193,26 @@ Give it this brief:
 >
 > Webhook event logs, append-only audit tables, and any entity the agent reasonably judges has no concept of an actor or soft-delete may omit `deleted_at`/`version`/`created_by`/`updated_by`. When in doubt, include them — `validate.mjs` warns if they're missing but does not error.
 >
+> **Session entity (cookie sessions only).** When `config.auth.strategy === "session"` AND `config.auth.store === "postgres"`, emit a `Session` entity alongside `users`:
+>
+> ```json
+> {
+>   "name": "Session",
+>   "table": "sessions",
+>   "fields": [
+>     {"name": "id", "type": "text", "pk": true},
+>     {"name": "user_id", "type": "uuid", "fk": "users.id"},
+>     {"name": "expires_at", "type": "timestamptz", "required": true},
+>     {"name": "data", "type": "jsonb"},
+>     {"name": "created_at", "type": "timestamptz", "default": "now()"}
+>   ],
+>   "indexes": [{"columns": ["user_id"]}, {"columns": ["expires_at"]}],
+>   "evidence": ["config.auth.strategy === 'session' && store === 'postgres'"]
+> }
+> ```
+>
+> Do **NOT** add the best-practice columns (`deleted_at`, `version`, `created_by`, `updated_by`) to `Session` — session rows are server-managed, ephemeral, deleted hard on logout/expiry, and have no concept of an "actor" beyond the user the FK already names. The validator's exception list covers this. When `store === "redis"` do not emit `Session` (the validator will error if you do).
+>
 > **2. `.backend-design/state/relationships.json`** — a JSON array:
 >
 > ```json
@@ -213,7 +233,7 @@ Give it this brief:
 > - Multi-select / tag input → many-to-many
 > - Nested URL `/x/[xId]/y/[yId]` → Y belongs to X
 >
-> **3. `.backend-design/state/auth.json`** — JSON object describing auth:
+> **3. `.backend-design/state/auth.json`** — JSON object describing auth. **JWT shape:**
 >
 > ```json
 > {
@@ -230,6 +250,26 @@ Give it this brief:
 >   "rbac_roles": []
 > }
 > ```
+>
+> **Cookie session shape** (when `config.auth.strategy === "session"` — pre-set by the CLI in `config.json`, never inferred from the UI):
+>
+> ```json
+> {
+>   "strategy": "session",
+>   "store": "postgres",
+>   "cookie": { "name": "sid", "httpOnly": true, "secure": true, "sameSite": "lax", "maxAgeDays": 7 },
+>   "csrf": { "enabled": true, "header_name": "X-CSRF-Token" },
+>   "password_hash": "bcrypt",
+>   "bcrypt_cost": 12,
+>   "signup": true,
+>   "email_verification": false,
+>   "password_reset": false,
+>   "oauth_providers": [],
+>   "rbac_roles": []
+> }
+> ```
+>
+> Copy `store`, `cookie`, and `csrf` shapes verbatim from the above when the strategy is session. The `cookie.secure` flag is interpreted "true in production" by codegen (`process.env.NODE_ENV === "production"`); leave the literal `true` in `auth.json`. When `strategy === "session"`, `POST /auth/logout` is **meaningful** — it destroys the server-side session row (Postgres) or key (Redis) — not the JWT-strategy no-op. Add a `triggered_by` evidence pointer to the logout button (or, if the UI doesn't have one yet, the screen whose presence implies authenticated sessions) so the validator's "every endpoint has a UI trigger" invariant holds.
 >
 > Set fields from `forms.json -> auth_surface`. Add `rbac_roles` if `screens.json` shows admin-only pages or role-gated UI.
 >
@@ -401,6 +441,14 @@ This writes `./backend-design.env.example` at the repo root with every env var t
 
 **Exception:** for the `s2ai-schema` stack, `render-env-example.mjs` returns without writing — there is no server to configure, so don't surface a "wrote env template" message. `detect-gaps.mjs` also skips its `missing_env_var` checks for this stack; the remaining `unwired_button`, `missing_auth_ui`, and `external_account_unconfirmed` gaps still apply and are still surfaced in `backend-design-next-steps.md`.
 
+**Then render the OpenAPI spec** so consumers can preview the API contract without booting the backend:
+
+```bash
+node <SKILL_DIR>/scripts/render-openapi.mjs
+```
+
+This writes `./openapi.json` at the repo root — OpenAPI 3.1 with one operation per endpoint, a top-level `webhooks` block for incoming webhooks, and `components.schemas` per entity. The Phase 4 codegen prompts copy this file into the scaffolded backend so the Swagger UI at `/docs` serves the same contract design-time reviewers see. Placeholder endpoints (`temporary: true`) and external endpoints (`is_external: true`) are skipped — the spec describes the real contract, not stubs. The `s2ai-schema` stack also skips this step (no server, no API to document).
+
 **Checkpoint write** (end of Phase 2.5): merge `{ phase_2_5_at: <ISO now> }` into `.backend-design/checkpoint.json`.
 
 ---
@@ -430,10 +478,10 @@ If the skeptic agent writes zero findings, that's a valid outcome — small or s
 After Phase 2.5 completes:
 
 1. Read `.backend-design/state/design-summary.json` (emitted by `render-design.mjs` alongside the markdown — ~500 bytes of pre-computed counts) and `.backend-design/gaps.json`. **Do not read `backend-design.md`** — it's for the user, not for the model summary step. Print a short summary to the user using fields from these two files: entity count, table count, endpoint count, whether auth is included (`auth_enabled`), `coverage_check.covered` vs. `coverage_check.flagged`, `open_question_count` (split as `<X> product-intent · <Y> skeptic-pass` using `skeptic_count` from the same summary file), and `<N> blocker(s) · <M> wire-up(s) · <K> info item(s)` from `gaps.json`.
-2. Tell the user: "Three files are ready for review: `./backend-design.md` (the design, including a recommended answer to every open question), `./backend-design-next-steps.md` (env vars, wire-up TODOs, accounts to set up), and `./backend-design.env.example` (copy to `.env` and fill in). Let me know to proceed, or describe any changes."
+2. Tell the user: "Four files are ready for review: `./backend-design.md` (the design, including a recommended answer to every open question), `./backend-design-next-steps.md` (env vars, wire-up TODOs, accounts to set up), `./backend-design.env.example` (copy to `.env` and fill in), and `./openapi.json` (OpenAPI 3.1 contract — load it into Stoplight, Swagger Editor, or `npx openapi-typescript` to preview before scaffolding). Let me know to proceed, or describe any changes."
 3. **Stop.** Do not call any more tools. Wait for the user's next message.
 
-If the user asks for design edits, edit the underlying state JSON (e.g. `.backend-design/state/entities.json`) with `Edit`, then **re-run** `node <SKILL_DIR>/scripts/render-design.mjs` to regenerate `backend-design.md`. **Never hand-edit `backend-design.md` directly** — it's overwritten by the renderer. For substantial redesigns, re-spawn the Phase 2 synthesis agent with the revised requirements. **Do not hand-edit `backend-design-next-steps.md`** either — it's regenerated by `detect-gaps.mjs`. If the user closes a gap (e.g. sets an env var, adds an auth form), re-run `node <SKILL_DIR>/scripts/detect-gaps.mjs` instead.
+If the user asks for design edits, edit the underlying state JSON (e.g. `.backend-design/state/entities.json`) with `Edit`, then **re-run** `node <SKILL_DIR>/scripts/render-design.mjs` AND `node <SKILL_DIR>/scripts/render-openapi.mjs` so both the design doc and the OpenAPI spec stay in sync with the state. **Never hand-edit `backend-design.md` or `openapi.json` directly** — they're overwritten by the renderers. For substantial redesigns, re-spawn the Phase 2 synthesis agent with the revised requirements. **Do not hand-edit `backend-design-next-steps.md`** either — it's regenerated by `detect-gaps.mjs`. If the user closes a gap (e.g. sets an env var, adds an auth form), re-run `node <SKILL_DIR>/scripts/detect-gaps.mjs` instead.
 
 Only proceed to Phase 4 when the user gives explicit approval ("looks good", "proceed", "ship it", "go", etc.). Blockers in `gaps.json` are not hard gates for Phase 4 (codegen can still run with a missing `DATABASE_URL`), but warn the user that the scaffold won't boot until they're resolved.
 
