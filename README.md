@@ -38,7 +38,7 @@ Each framework has dedicated search patterns in `prompts/frontend-patterns.md` s
 4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets, per-source webhook secrets, email provider keys, `UPLOADS_DIR`), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions and a copy-pasteable `backend-design.env.example` at the repo root.
 5. **Skeptic pass** — a single adversarial Sonnet agent re-reads the design and surfaces concrete-pattern concerns (IDOR-shaped path params with no scoping, list endpoints with no matching index, unbounded webhook handlers, missing health endpoints, PII exposure) as additional Open Questions tagged `category: "skeptic"`. Capped at 8 findings per run.
 6. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
-7. **Scaffolds** a runnable backend in your chosen stack once you approve — every generated stack ships with vitest/pytest tests against a real ephemeral Postgres (via testcontainers) plus a security baseline: helmet/secure-headers, tighter rate limits on writes, CORS allowlist that refuses `*` in production, structured request logging.
+7. **Scaffolds** a runnable backend in your chosen stack once you approve — every generated stack ships with vitest/pytest tests against a real ephemeral Postgres (via testcontainers), a security baseline (helmet/secure-headers, tighter rate limits on writes, CORS allowlist that refuses `*` in production, structured request logging), and an **OpenAPI 3.1 contract** (`./openapi.json` at repo root) plus a stack-native Swagger UI at `/docs`. Sessions strategy adds CSRF middleware per stack.
 
 On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
 
@@ -55,7 +55,13 @@ You pick one when you run `npx backend-design start`:
 | **Python + FastAPI + SQLAlchemy + Postgres** | Strong typing, async by default. SQLAlchemy 2 + alembic. |
 | **s2ai schema only** | Emit a Mermaid `schema.mmd` for s2ai. No server scaffolded — you run s2ai yourself. |
 
-Auth: JWT or none. All stacks use bcrypt for password hashing. (Cookie sessions are not yet implemented in any of the codegen prompts — pick JWT or scaffold sessions yourself afterwards.)
+Auth: pick one when you run `npx backend-design start`:
+
+| Strategy | When to use | What you get |
+|---|---|---|
+| **JWT** | SPAs, mobile clients, anywhere stateless tokens fit | bcrypt password hashing, `JWT_SECRET`-signed access tokens, `Authorization: Bearer` middleware. |
+| **Cookie session** | Browser-only apps where real logout / server-side revocation matters | `httpOnly` / `sameSite: "lax"` cookie, Postgres-backed sessions (or Redis via `SESSION_STORE=redis`), CSRF middleware per stack with `X-CSRF-Token`. |
+| **None** | App has no users | Skips all auth wiring; refuses to scaffold endpoints with `auth: "required"`. |
 
 ## Design choices (and why)
 
@@ -84,8 +90,6 @@ Switch by editing `.env` — no code changes.
 
 Owning the boundaries so you don't waste time finding out later.
 
-- **OpenAPI / Swagger generation** — coming in v0.10.0. All the data already lives in `.backend-design/state/endpoints.json`; the render script is the only missing piece.
-- **Cookie sessions** — coming in v0.11.0 as a third auth option (`jwt` / `session` / `none`), Postgres-backed by default (Redis available as `SESSION_STORE=redis`), with CSRF middleware per stack. Until then: pick JWT, or scaffold sessions yourself afterwards.
 - **Async jobs / queues** — not inferable from the UI. Pick a queue that fits your runtime (BullMQ + Redis for Node, pg-boss for Postgres-native, Inngest / Trigger.dev for serverless, Celery for Python) and wire it manually.
 - **WebSockets** — server scaffolding is the easy part; channels, presence, auth-on-connect, and pub/sub at scale are template-resistant. Reach for [Pusher](https://pusher.com), [Ably](https://ably.com), or Supabase Realtime if you don't want to build it.
 - **Multi-database** — Postgres only, by choice (see Design Choices). Prisma / Drizzle / SQLAlchemy all support MySQL and SQLite; PRs that add per-DB type mappings + migration syntax to each codegen prompt are welcome.
@@ -174,6 +178,7 @@ At the repo root, Phase 2 / 2.5 also write:
 | `backend-design.md` | `scripts/render-design.mjs` | Deterministic design doc — 8 sections, regenerated from state JSON each run |
 | `backend-design-next-steps.md` | `scripts/detect-gaps.mjs` | Action checklist: blockers, wire-up TODOs, info items |
 | `backend-design.env.example` | `scripts/render-env-example.mjs` | Copy-pasteable `.env` template with every var the design needs, commented |
+| `openapi.json` | `scripts/render-openapi.mjs` | OpenAPI 3.1 contract — one operation per endpoint, top-level `webhooks` block, `components.schemas` per entity. Codegen copies it into the scaffold so Swagger UI at `/docs` serves the same spec |
 
 Every JSON entry includes `evidence: ["file:line"]` so you can trace any decision back to the UI.
 

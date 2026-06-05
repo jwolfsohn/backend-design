@@ -6,45 +6,61 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-06-02
+
+Bundles a connected sprint of work that landed together: cookie sessions + CSRF, the OpenAPI 3.1 contract with stack-native Swagger UI, the Phase 2.6 skeptic pass, generated tests + a security baseline for every scaffold, and the new inference policies (auth from non-UI signals, best-practice columns by default, domain-pattern detection). The previous 0.8.0, 0.9.0, and 0.10.0 tags were rolled into this release rather than left as separate same-day bumps.
+
 ### Added
-- **Phase 2.6 — Skeptic pass.** A new `general-purpose` Sonnet subagent reviews the synthesized design against four adversarial axes (security, scalability/data integrity, multi-tenancy, operability) and appends findings to `open_questions.json` with `category: "skeptic"`. Capped at 8 questions per run; only fires when concrete patterns match (IDOR-shaped path params, missing list indexes, missing org scoping, missing health endpoints, etc.). Surfaces under a dedicated "Skeptic-pass findings" sub-heading in the design doc.
+- **Cookie sessions** as a third auth strategy alongside `jwt` and `none`. `npx backend-design start` adds a "Cookie session (Postgres-backed, with CSRF)" option; picking it follows up with a second prompt for the session store (`postgres` default — uses the existing `DATABASE_URL`, no new infra — or `redis` via `SESSION_STORE=redis` + `REDIS_URL`). Real logout (destroys the row), revocable from the DB, XSS-resistant when `httpOnly: true`.
+- **CSRF protection** scaffolded in every session-strategy backend. Mutating requests must send `X-CSRF-Token` (fetched from `GET /auth/csrf-token`). Per stack:
+  - Express: `express-session` + `connect-pg-simple` (or `connect-redis`) + `csrf-csrf` (the maintained replacement for the deprecated `csurf`).
+  - Fastify: `@fastify/session` + `@fastify/csrf-protection`.
+  - Hono: `hono-sessions` + `hono/csrf` middleware.
+  - Next.js: `iron-session` (cookie-encrypted by default, with a thin DB/Redis adapter when `store !== "cookie"`) + a `lib/csrf.ts` helper for mutating route handlers.
+  - FastAPI: `starsessions` + `fastapi-csrf-protect`.
+- **`Session` entity** added to synthesis when `auth.strategy === "session"` AND `auth.store === "postgres"` (the validator forbids it when `store === "redis"`). The validator skips best-practice-column checks for `Session` rows.
+- **OpenAPI 3.1 generation.** New `scripts/render-openapi.mjs` reads `.backend-design/state/*.json` and emits `./openapi.json` at the repo root, including incoming webhooks as a first-class top-level `webhooks` block (`webhook_source` + `signature_header` documented per provider). Component schemas are emitted per entity with field-type mapping (`uuid → string format:uuid`, `timestamptz → string format:date-time`, etc.); `pk`, `version`, `created_at`/`updated_at`, `deleted_at`, and `created_by`/`updated_by` are marked `readOnly` (and nullable where appropriate). `securitySchemes.bearerAuth` is emitted only when `auth.strategy === "jwt"`; placeholder endpoints (`temporary: true`) and external endpoints (`is_external: true`) are skipped.
+- **Swagger UI in every codegen stack:**
+  - Express: `swagger-ui-express` serves `src/openapi.json` at `/docs`.
+  - Fastify: `@fastify/swagger` + `@fastify/swagger-ui` in `static` mode at `/docs`.
+  - Hono: `@hono/swagger-ui` mounted on the static spec at `/docs`.
+  - Next.js: static `public/openapi.json` + `app/api-docs/page.tsx` with `swagger-ui-react`.
+  - FastAPI: native `/docs` and `/redoc` (Pydantic-driven, more accurate); the orchestrator's `./openapi.json` is still emitted at the repo root for design-time reviewers, and `BACKEND_SETUP.md` documents the two-spec model.
+- **Phase 2.6 — Skeptic pass.** A `general-purpose` Sonnet subagent reviews the synthesized design against four adversarial axes (security, scalability/data integrity, multi-tenancy, operability) and appends findings to `open_questions.json` with `category: "skeptic"`. Capped at 8 questions per run; only fires when concrete patterns match (IDOR-shaped path params, missing list indexes, missing org scoping, missing health endpoints, etc.). Surfaces under a dedicated "Skeptic-pass findings" sub-heading in the design doc.
 - **Generated tests** for every codegen stack — vitest + supertest + `@testcontainers/postgresql` for Node stacks; pytest + httpx + `testcontainers[postgres]` for FastAPI. Tests cover signup → login → protected flow plus per-resource list/create/PATCH-with-`If-Match`/409-conflict/soft-delete on a real ephemeral Postgres.
 - **Security baseline** in every codegen stack:
   - Node stacks: helmet (or `@fastify/helmet` / `hono/secure-headers`), tighter rate limits on writes (`RATE_LIMIT_WRITE_MAX`), CORS allowlist via `ALLOWED_ORIGINS` (refuses `*` in production), structured request logging via pino.
   - Next.js: `middleware.ts` at project root with CORS allowlist and an in-memory rate limiter that swaps to `@upstash/ratelimit` when `UPSTASH_REDIS_URL` is set.
   - FastAPI: `slowapi` rate limiting, security headers middleware, `CORSMiddleware` allowlist, `structlog` for JSON logs in production.
-- `CHANGELOG.md` (this file) and a `## Design choices` section in `README.md`.
-- `docs/demo.md` — script for recording the README demo gif.
-- `docs/example-ci.yml` — drop-in GitHub Actions workflow example for users to copy into their own repos (Postgres service container + validate + tsc + test; commented-out Python/FastAPI variant at the bottom).
-
-### Changed
-- Render-design now partitions Open Questions by `category`: synthesis-author questions render first, skeptic-pass findings render under a labeled sub-heading.
-- `validate.mjs` accepts `category` and `axis` fields on open-question entries without warning.
-- `bin/backend-design.mjs status` surfaces skeptic-finding counts alongside open gap counts.
-- `scripts/render-env-example.mjs` adds `ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`, and (for Next.js) optional `UPSTASH_REDIS_URL`.
-
-### Documentation
-- README: hosting matrix for Postgres (Neon / Supabase / Railway / Fly / RDS / local Docker) under Design Choices.
-- README: explicit `## What it doesn't do (yet)` section covering OpenAPI (v0.10.0), cookie sessions (v0.11.0), jobs/queues, WebSockets, multi-DB, and GraphQL — each with the rationale and any planned-version note.
-
-## [0.8.0] — 2026-06-02
-
-### Added
-- **Inference policy: auth from non-UI signals.** Phase 2 now infers a `users` entity + `/auth/*` endpoints when ANY of these hold even without a login/signup form: `auth_required` screens, token-shaped storage keys, bearer headers, or `/api/auth/*` fetches. The strongest signal is recorded in `auth.json -> inferred_from` and surfaced in `backend-design.md` and `backend-design-next-steps.md` so the user can either add the missing UI or remove the inferring signal.
+- **Inference policy: auth from non-UI signals.** Phase 2 infers a `users` entity + `/auth/*` endpoints when ANY of these hold even without a login/signup form: `auth_required` screens, token-shaped storage keys, bearer headers, or `/api/auth/*` fetches. The strongest signal is recorded in `auth.json -> inferred_from` and surfaced in `backend-design.md` and `backend-design-next-steps.md` so the user can either add the missing UI or remove the inferring signal.
 - **Best-practice columns by default** on every entity: `deleted_at` (soft delete), `version` (optimistic lock), and `created_by` / `updated_by` (audit FKs to the auth entity). Codegen handlers honor them — list/detail queries filter `deleted_at IS NULL`, `DELETE` soft-deletes, `PATCH` increments `version` and 409s on `If-Match` mismatch, partial unique indexes replace column-level UNIQUE on soft-deletable entities.
 - **Domain pattern pass.** Scans screen IDs, paths, component names, and endpoint paths for keyword clusters (ecommerce, chat, social, booking, cms). When ≥2 distinct tokens match a class, emits one Open Question recommending deeper entities — never silently added.
 - **Per-framework patterns files** at `prompts/patterns/<patterns_key>.md`, one small file per framework. Phase 1 subagents `Read` the patterns file path directly instead of having ~300 lines inlined into every spawn — preserves prompt-cache hits across the four parallel agents.
+- `OPENAPI_PUBLIC` env var to opt into exposing `/docs` without auth in production. Default behavior gates `/docs` behind the existing auth middleware.
+- New env vars surfaced by `render-env-example.mjs` and `detect-gaps.mjs`: `SESSION_SECRET`, `REDIS_URL`, `SESSION_MAX_AGE_DAYS`, `ALLOWED_ORIGINS`, `LOG_LEVEL`, `RATE_LIMIT_MAX`, `RATE_LIMIT_WRITE_MAX`, and (for Next.js) optional `UPSTASH_REDIS_URL`.
+- New `prompts/next-steps-templates.md` entries: `missing_env_var:SESSION_SECRET`, `missing_env_var:REDIS_URL`.
+- `CHANGELOG.md` (this file) and a `## Design choices` section in `README.md`.
+- `docs/demo.md` — script for recording the README demo gif.
+- `docs/example-ci.yml` — drop-in GitHub Actions workflow example (Postgres service container + validate + tsc + test; commented-out Python/FastAPI variant at the bottom).
 
 ### Changed
-- Validator emits warnings (not errors) when entities lack the new best-practice columns, so old state files keep passing while migration is incremental.
-- `validate.mjs` checks `version` field shape (`type: integer`, `required: true`, `default: 1`) and resolves FKs by `table` name (not entity name).
+- `validate.mjs` accepts `auth.strategy === "session"` and validates the matching `auth.store` invariants. `findAuthEntityName` is hardcoded to exclude `Session` from auth-entity candidates so it never gets misclassified.
+- `validate.mjs` accepts `category` and `axis` fields on open-question entries without warning; checks the `version` field shape (`type: integer`, `required: true`, `default: 1`); resolves FKs by `table` name (not entity name); emits warnings (not errors) when entities lack the new best-practice columns so old state files keep passing while migration is incremental.
+- `bin/backend-design.mjs` AUTH_OPTIONS gains the `session` entry plus a follow-up store prompt that persists to `config.json -> auth.store`. `status` surfaces skeptic-finding counts alongside open gap counts, and `OpenAPI: ./openapi.json (N paths, M webhooks)` when the file exists.
+- `npx backend-design gaps` re-renders `./openapi.json` alongside `./backend-design.env.example` so design and contract stay in sync after edits.
+- `render-design.mjs` partitions Open Questions by `category` (synthesis questions render first, skeptic-pass findings under a labeled sub-heading) and surfaces `auth.inferred_from` as a transparency receipt in the Auth model section.
 - `detect-gaps.mjs` reworded `missing_auth_ui` blocker to call out `inferred_from` when auth was scaffolded from a non-UI signal.
-- `render-design.mjs` surfaces `auth.inferred_from` as a transparency receipt in the Auth model section.
 - `render-s2ai-schema.mjs` adds `@nullable @indexed` to `deleted_at`, `@autoGenerate` to `version`.
+- SKILL.md Phase 2.5 runs `render-openapi.mjs` immediately after `render-env-example.mjs`. Phase 3 review-gate language now points the user at four artifacts (design, next-steps, env example, OpenAPI spec).
 
 ### Extracted
 - Phase 1 inventory briefs moved from inline blockquotes in `SKILL.md` to `prompts/inventory/{screens,components,endpoints,forms}.md`. Orchestrator passes brief paths to subagents instead of pasting ~300 lines per spawn.
-- `render-design.mjs` now emits `.backend-design/state/design-summary.json` (counts + coverage check + auth status) so the Phase 3 summary step reads pre-computed JSON instead of re-parsing the markdown.
+- `render-design.mjs` emits `.backend-design/state/design-summary.json` (counts + coverage check + auth status) so the Phase 3 summary step reads pre-computed JSON instead of re-parsing the markdown.
+
+### Documentation
+- README: hosting matrix for Postgres (Neon / Supabase / Railway / Fly / RDS / local Docker) under Design Choices.
+- README: explicit `## What it doesn't do (yet)` section covering jobs/queues, WebSockets, multi-DB, and GraphQL — each with the rationale.
+- README: "Synthesizes" summary line gains the "ships an OpenAPI 3.1 contract" and "session backend with CSRF" lines; the cookie-sessions and OpenAPI bullets are removed from "What it doesn't do (yet)" now that both ship.
 
 ## [0.7.0] — 2026-02-15
 
@@ -94,8 +110,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Added
 - Initial release. SKILL.md runbook, JSON state schema, validator, model pinning, CLI installer.
 
-[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.8.0...HEAD
-[0.8.0]: https://github.com/jwolfsohn/backend-design/compare/v0.7.0...v0.8.0
+[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/jwolfsohn/backend-design/compare/v0.7.0...v0.11.0
 [0.7.0]: https://github.com/jwolfsohn/backend-design/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jwolfsohn/backend-design/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/jwolfsohn/backend-design/compare/v0.4.1...v0.5.0
