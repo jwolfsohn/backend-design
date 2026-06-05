@@ -8,6 +8,7 @@
 // Idempotent. Safe to re-run after editing the design.
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
+import { isMainModule } from "./is-main.mjs";
 import { join } from "path";
 
 const OUTPUT_FILE = "backend-design.env.example";
@@ -344,7 +345,7 @@ export function runRender(cwd = process.cwd()) {
   return out;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const result = runRender();
   if (result === null) {
     console.log(`Skipped ${OUTPUT_FILE} (s2ai-schema stack has no server to configure).`);

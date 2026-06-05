@@ -420,6 +420,8 @@ node <SKILL_DIR>/scripts/detect-gaps.mjs
 
 It reads the state JSON, `config.json`, `./.env`, and `./package.json`; writes `.backend-design/gaps.json` and `./backend-design-next-steps.md`. No agent needed — it's a plain script, same shape as `validate.mjs`.
 
+**Exit code:** `0` if no blocker gaps, `1` if blocker gaps exist. This is **not a script failure** — a `1` exit means the detector ran successfully and found blockers the user needs to resolve. Do not treat it as an error; read the summary line and continue.
+
 What it catches:
 
 - **`missing_env_var`** — env vars required by the chosen stack/auth that aren't in `.env` (e.g. `DATABASE_URL` for Postgres stacks, `JWT_SECRET` when auth is JWT, `STRIPE_WEBHOOK_SECRET` for Stripe webhooks, `<PROVIDER>_CLIENT_ID` / `_SECRET` per OAuth provider).

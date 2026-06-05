@@ -10,6 +10,7 @@ import { createHash } from "crypto";
 import { execSync } from "child_process";
 import { readFileSync, readdirSync, existsSync } from "fs";
 import { join } from "path";
+import { isMainModule } from "./is-main.mjs";
 
 // Mirrors EXT_FOR in bin/backend-design.mjs. Kept here to avoid coupling the CLI tool's
 // internals to the script. If a new framework is added, update both.
@@ -223,7 +224,7 @@ export function printStatus(cwd = process.cwd()) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const cmd = process.argv[2] ?? "signature";
   if (cmd === "signature") {
     console.log(computeSignature());

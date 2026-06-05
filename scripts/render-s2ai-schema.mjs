@@ -6,6 +6,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
+import { isMainModule } from "./is-main.mjs";
 
 const STATE_FILES = ["entities.json", "relationships.json", "endpoints.json", "auth.json"];
 
@@ -262,7 +263,7 @@ export function runRender(cwd = process.cwd()) {
   return out;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runRender();
   console.log("Wrote ./schema.mmd");
 }

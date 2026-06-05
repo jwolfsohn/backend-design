@@ -8,6 +8,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { isMainModule } from "./is-main.mjs";
 
 const OUTPUT_FILE = "openapi.json";
 const STATE_FILES = ["endpoints.json", "entities.json", "auth.json"];
@@ -491,7 +492,7 @@ export function runRender(cwd = process.cwd()) {
   return spec;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   const spec = runRender();
   if (spec === null) {
     console.log(`Skipped ${OUTPUT_FILE} (s2ai-schema stack has no API to document).`);

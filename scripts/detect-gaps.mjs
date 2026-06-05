@@ -8,6 +8,7 @@
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
+import { isMainModule } from "./is-main.mjs";
 
 const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const TEMPLATES_PATH = join(SKILL_DIR, "prompts", "next-steps-templates.md");
@@ -566,7 +567,7 @@ export function printResults(gaps) {
   return s.blockers > 0 ? 1 : 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   try {
     process.exit(printResults(runDetect()));
   } catch (e) {

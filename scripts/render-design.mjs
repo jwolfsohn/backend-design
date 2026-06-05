@@ -4,6 +4,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
+import { isMainModule } from "./is-main.mjs";
 
 const STATE_FILES = [
   "screens.json",
@@ -420,7 +421,7 @@ export function runRender(cwd = process.cwd()) {
   return out;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   runRender();
   console.log("Wrote ./backend-design.md");
 }

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
+import { isMainModule } from "./scripts/is-main.mjs";
 
 const FILES = [
   "screens.json",
@@ -400,6 +401,6 @@ export function printResults({ errors, warnings, state }) {
   return 0;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (isMainModule(import.meta.url)) {
   process.exit(printResults(validate()));
 }
