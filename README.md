@@ -4,12 +4,6 @@ A [Claude Code](https://claude.com/claude-code) skill that reads an existing fro
 
 > See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
-## Demo
-
-![backend-design demo](docs/demo.gif)
-
-_Start in a frontend project → pick a stack → review the design → scaffolded backend with tests + security middleware boots in one command._
-
 ## Supported frontends
 
 Auto-detected via `package.json` and a couple of key files — no full-codebase scan needed:
@@ -28,7 +22,7 @@ Auto-detected via `package.json` and a couple of key files — no full-codebase 
 - **HTMX** (HTML attribute-driven)
 - **Vanilla** HTML + JS
 
-Each framework has dedicated search patterns in `prompts/frontend-patterns.md` so the inventory agents grep the right files (e.g. `.vue` for Vue, `+page.svelte` for SvelteKit, `*.component.ts` for Angular).
+Each framework has a dedicated patterns file under `prompts/patterns/` (e.g. `prompts/patterns/vue-spa.md`, `prompts/patterns/sveltekit.md`, `prompts/patterns/angular.md`) so the inventory agents grep the right files.
 
 ## What it does
 
@@ -94,8 +88,6 @@ Owning the boundaries so you don't waste time finding out later.
 - **WebSockets** — server scaffolding is the easy part; channels, presence, auth-on-connect, and pub/sub at scale are template-resistant. Reach for [Pusher](https://pusher.com), [Ably](https://ably.com), or Supabase Realtime if you don't want to build it.
 - **Multi-database** — Postgres only, by choice (see Design Choices). Prisma / Drizzle / SQLAlchemy all support MySQL and SQLite; PRs that add per-DB type mappings + migration syntax to each codegen prompt are welcome.
 - **GraphQL** — **intentionally out of scope.** The whole skill assumes REST/JSON inference from `fetch()` calls. A GraphQL pipeline would need a different inference model entirely. If you want GraphQL on top, hand-write a thin layer over the generated REST handlers.
-
-For running the generated backend in CI, see [`docs/example-ci.yml`](docs/example-ci.yml) — a drop-in GitHub Actions workflow that boots a real Postgres service container, type-checks, and runs the test suite.
 
 ### Vibe-coder mode (opt-in)
 

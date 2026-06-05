@@ -13,6 +13,7 @@
     "prompts/",
     "scripts/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
