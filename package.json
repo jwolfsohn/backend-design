@@ -1,6 +1,6 @@
 {
   "name": "backend-design",
-  "version": "0.14.0",
+  "version": "0.15.0",
   "description": "Claude Code skill that analyzes any modern web frontend (React, Vue, Svelte, Angular, Astro, Solid, Qwik, Remix, HTMX, vanilla, more) and scaffolds a matching backend in the stack of your choice.",
   "type": "module",
   "bin": {

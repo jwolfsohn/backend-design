@@ -6,6 +6,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.15.0] — 2026-06-05
+
+Closes two design holes the QA tester surfaced: the auth-signal list missed user-owned-mutations-without-auth-UI, and auth endpoints emitted from non-UI signals had to fake a `triggered_by` to satisfy the validator.
+
+### Added
+- **Auth signal 7 — judgment-call fallback for user-owned mutations.** When signals 1–6 don't fire but the inventory has at least one `forms.standalone_buttons[]` / `forms.forms[]` mutating action that isn't a public-form pattern (contact, newsletter, subscribe, waitlist, feedback, support) and the mutated target isn't `localStorage`-persisted, the synthesis agent now emits a **placeholder `users` entity** (no `password_hash`, optional `email`, with a `note` field flagging the placeholder state), nullable `user_id` FKs on owned entities, `auth.json.strategy: "none"`, `auth.json.inferred_from: "judgment:user_owned_mutations"`, and a Tier-1 product-intent open question. **Does NOT emit `POST /auth/signup` / `/login` / `/logout`** — v1 ships anonymously. Codifies the judgment call the synthesis agent was making informally; previously the agent had to either fabricate a signal or skip users entirely.
+- **`inferred_from_signal: "<signal-name>"` endpoint field.** Generic escape hatch for endpoints with no UI source, parallel to `is_webhook: true`. Auth endpoints emitted from signals 3–6 (`auth_required_screen`, `token_storage_key`, `auth_header`, `auth_path`) now carry this field with empty `triggered_by` instead of pointing `triggered_by` at the signal's file:line. Validator at `validate.mjs:92` accepts it as a third alternative; renderer shows `inferred from \`<signal>\` (no UI)` in the trigger column with an `inferred` flag in the method cell; OpenAPI emits `x-inferred-from-signal`. Generic vocabulary so future inference paths (cron jobs, env-flag-gated admin endpoints) can reuse it.
+
+### Changed
+- **SKILL.md auth-signal block** rewritten. Signals 3–6 instructions now say "set `inferred_from_signal`, leave `triggered_by: []`" instead of "set `triggered_by` to the signal's file:line." Old instruction caused the synthesis agent to point `POST /auth/signup` at unrelated UI (e.g. the Reserve button) when no auth UI existed — what the QA report called "the invariant is effectively spoofed."
+- **`prompts/skeptic.md`** adds a security-axis bullet checking that `inferred_from_signal` on auth endpoints agrees with `auth.json.inferred_from`.
+- **All 5 codegen prompts** (`codegen-node-express-prisma`, `codegen-node-fastify-prisma`, `codegen-node-hono-drizzle`, `codegen-nextjs-prisma`, `codegen-python-fastapi`) now handle `inferred_from_signal` endpoints: scaffold the route normally with a TODO comment flagging the missing UI.
+- **`prompts/inventory/endpoints.md`** documents the new convention with an example block parallel to the existing webhook example.
+
+### Tests
+- 5 new fixtures in `tests/validate.test.mjs` and `tests/render-design.test.mjs` covering: inferred-only validates clean, both fields together validates clean, neither field errors with a message mentioning the new escape hatch, trigger column rendering, UI-trigger-wins-over-inferred display priority.
+
+### Migration
+- Additive — designs in the wild with `triggered_by: ["state-file-style-reference"]` still validate. To migrate, move the value into `inferred_from_signal` and clear `triggered_by`.
+
+## [0.14.1] — 2026-06-05
+
+Critical fix: every helper script silently no-op'd when the skill was installed as a symlink (the default `npx backend-design start` flow).
+
+### Fixed
+- **Symlink-safe main-module guard.** All seven scripts (`validate.mjs`, `scripts/checkpoint.mjs`, `scripts/render-design.mjs`, `scripts/render-env-example.mjs`, `scripts/render-openapi.mjs`, `scripts/render-s2ai-schema.mjs`, `scripts/detect-gaps.mjs`) gated their CLI main block behind `import.meta.url === \`file://${process.argv[1]}\``. For ES modules, Node resolves `import.meta.url` to the symlink-resolved real path while `process.argv[1]` keeps the path as typed — so when the skill is installed as a symlink (which `npx backend-design start` does into `<cwd>/.claude/skills/backend-design`), the two never match. Every script exited 0 doing nothing: no output, no files written, no validation, no checkpoint signature. The same guard also broke for relative paths (`node scripts/foo.mjs`) where one side is relative and the other absolute. Replaced with a shared `scripts/is-main.mjs` helper that resolves both sides via `realpathSync` before comparing.
+- **Tests pin the regression.** `tests/is-main.test.mjs` covers direct/absolute, through-symlink, relative-path, and import (non-main) invocation so the brittle pattern can't return.
+
+### Docs
+- **`SKILL.md` now documents** that `detect-gaps.mjs` exits 1 when blocker gaps exist — that's "ran successfully, found blockers," not a script failure. The orchestrator should not treat a non-zero exit here as an error.
+
 ## [0.14.0] — 2026-06-05
 
 CLI cosmetic overhaul — banner, gradient, summary panel.
