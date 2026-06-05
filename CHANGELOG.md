@@ -6,13 +6,52 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.15.1] — 2026-06-05
+
+Tightens the v0.15.0 signal-7 work so the rest of the system actually agrees with it. Adversarial review surfaced four cracks: the rendered design claimed a backend was scaffolded when none was, no validator backstop existed for the signal-7 contract, `auth.signup` was unspecified (risking a spurious `missing_auth_ui` blocker), and the codegen prompts ambiguously instructed on the placeholder `User` entity.
+
+### Fixed
+- **Rendered auth section** now branches on `auth.strategy === "none"` + `auth.inferred_from` starting with `judgment:`. Signal 7 reads "placeholder `users` entity only — no auth flow scaffolded; v1 ships anonymously"; signals 3–6 keep the existing "backend was scaffolded from this signal" message. Branch by `judgment:` prefix so future judgment-call signals reuse the message.
+- **Codegen prompts (all five frameworks)** clarify the placeholder-`User` case. Previous wording — "skip the `User` entity unless it appears in `entities.json` for a non-auth reason" — was ambiguous and risked a codegen agent dropping the placeholder, breaking nullable `user_id` FK references. New text explicitly requires the `User` entity to be scaffolded as a placeholder table when `auth.inferred_from === "judgment:user_owned_mutations"`, with no `password_hash` and no auth middleware wired to it.
+
+### Added
+- **Validator invariants for signal 7.** When `auth.inferred_from === "judgment:user_owned_mutations"`, `validate.mjs` errors if any of: `auth.strategy !== "none"`, any `POST /auth/{signup,login,logout}` (with or without `/api` prefix) is present, the auth entity has a `password_hash` field, or `auth.signup === true`. Backstops the 250-word SKILL.md prescription so a partial agent implementation can't drift past validation.
+- **Global coherence invariant.** `auth.strategy === "none"` paired with `auth.signup === true` now errors regardless of signal. `detect-gaps.mjs` uses `auth.signup` to decide whether a missing signup form is a blocker; this combination produced a spurious blocker for designs intentionally shipping anonymously.
+
+### Changed
+- **SKILL.md signal 7 paragraph** now explicitly requires `auth.json.signup: false` alongside `strategy: "none"` and `inferred_from: "judgment:user_owned_mutations"`. Justification appended inline: detect-gaps reads `auth.signup` and signal 7 explicitly does not want a signup form.
+
+### Tests
+- 6 new tests in `tests/validate.test.mjs` (signal-7 clean validates, four negative cases for each invariant, global `strategy:"none"` + `signup:true` coherence) and 2 in `tests/render-design.test.mjs` (signal-7 placeholder-only message, regression pin that signals 3–6 keep the original scaffolded-backend message). Shared `signal7Fixture()` factory documents the canonical signal-7 shape.
+
+---
+
+Second wave tightens the periphery around the same signal-7 work: an open-string field that accepted typos, a renderer ambiguity around webhook-plus-inferred endpoints, a too-narrow public-form taxonomy, doc line-number rot, and inconsistent renderer flag order. Plus two improvements surfaced during self-review: broader forbidden-endpoint matching and a pinned assumption comment.
+
+### Added
+- **`LEGAL_INFERRED_SIGNALS` whitelist** in `validate.mjs`. The `inferred_from_signal` field previously accepted any string — a typo like `"token_storeage_key"` validated clean, rendered garbage in the trigger column, and silently exported as `x-inferred-from-signal` in OpenAPI. Now restricted to `auth_required_screen`, `token_storage_key`, `auth_header`, `auth_path`, `judgment:user_owned_mutations`. Update the constant when new inference paths are documented.
+- **Mutual-exclusion check: `is_webhook` + `inferred_from_signal`.** The combination is conceptually nonsensical (two orthogonal "no UI trigger" reasons). Validator now errors instead of letting the renderer band-aid the case with a null-juggling fallback chain.
+- **Skeptic security rule for anonymous writes.** When `auth.strategy === "none"` and `auth.inferred_from` starts with `judgment:`, entities with `user_id` FKs surface a question: should write endpoints reject client-supplied `user_id` to avoid impersonation when auth lands? Complements (does not duplicate) the synthesis-emitted Tier-1 product-intent question.
+
+### Changed
+- **Signal-7 forbidden-endpoint check broadened.** Replaced the six hardcoded paths with a regex matching `signup|register|login|signin|logout|signout` (with or without hyphen) at any depth of `/auth/` nesting. Catches `/auth/register`, `/v1/auth/login`, `/auth/sign-up`, etc. — variants a future synthesis agent could emit that the literal Set would have missed.
+- **Public-form taxonomy expanded** in SKILL.md signal 7. Added `contact-us`, `get-in-touch`, `subscription`, `wait-list`, `support-ticket`, `help`, `lead/leads`, `demo`, `demo-request`. Wider suppression biases toward NOT emitting a placeholder users entity on borderline public-form apps.
+- **Renderer flag order is now severity-descending**: `placeholder → inferred → webhook → multipart`. Placeholder is most actionable (must be replaced before shipping); inferred signals a missing UI trigger; webhook and multipart are informational.
+- **`render-design.mjs` judgment-prefix branch** carries an inline assumption comment explaining why `startsWith("judgment:")` paired with `strategy === "none"` is the actual guard — relaxing either side without the other would render an incorrect "no auth flow scaffolded" claim.
+
+### Fixed
+- **CHANGELOG line-number drift.** The 0.15.0 entry referenced `validate.mjs:92`; the line moved with each subsequent change. Replaced with a function-name reference.
+
+### Tests
+- 5 new tests: enum violation (`tests/validate.test.mjs`), `judgment:user_owned_mutations` accepted by the enum, `is_webhook` + `inferred_from_signal` mutual exclusion, parameterized forbidden-endpoint variants (`/auth/register`, `/auth/sign-up`, `/auth/signin`, `/v1/auth/login`, `/api/v2/auth/sign-out`), and the flag-order regression pin (`tests/render-design.test.mjs`).
+
 ## [0.15.0] — 2026-06-05
 
 Closes two design holes the QA tester surfaced: the auth-signal list missed user-owned-mutations-without-auth-UI, and auth endpoints emitted from non-UI signals had to fake a `triggered_by` to satisfy the validator.
 
 ### Added
 - **Auth signal 7 — judgment-call fallback for user-owned mutations.** When signals 1–6 don't fire but the inventory has at least one `forms.standalone_buttons[]` / `forms.forms[]` mutating action that isn't a public-form pattern (contact, newsletter, subscribe, waitlist, feedback, support) and the mutated target isn't `localStorage`-persisted, the synthesis agent now emits a **placeholder `users` entity** (no `password_hash`, optional `email`, with a `note` field flagging the placeholder state), nullable `user_id` FKs on owned entities, `auth.json.strategy: "none"`, `auth.json.inferred_from: "judgment:user_owned_mutations"`, and a Tier-1 product-intent open question. **Does NOT emit `POST /auth/signup` / `/login` / `/logout`** — v1 ships anonymously. Codifies the judgment call the synthesis agent was making informally; previously the agent had to either fabricate a signal or skip users entirely.
-- **`inferred_from_signal: "<signal-name>"` endpoint field.** Generic escape hatch for endpoints with no UI source, parallel to `is_webhook: true`. Auth endpoints emitted from signals 3–6 (`auth_required_screen`, `token_storage_key`, `auth_header`, `auth_path`) now carry this field with empty `triggered_by` instead of pointing `triggered_by` at the signal's file:line. Validator at `validate.mjs:92` accepts it as a third alternative; renderer shows `inferred from \`<signal>\` (no UI)` in the trigger column with an `inferred` flag in the method cell; OpenAPI emits `x-inferred-from-signal`. Generic vocabulary so future inference paths (cron jobs, env-flag-gated admin endpoints) can reuse it.
+- **`inferred_from_signal: "<signal-name>"` endpoint field.** Generic escape hatch for endpoints with no UI source, parallel to `is_webhook: true`. Auth endpoints emitted from signals 3–6 (`auth_required_screen`, `token_storage_key`, `auth_header`, `auth_path`) now carry this field with empty `triggered_by` instead of pointing `triggered_by` at the signal's file:line. The validator's "every endpoint has a UI trigger" check accepts it as a third alternative; renderer shows `inferred from \`<signal>\` (no UI)` in the trigger column with an `inferred` flag in the method cell; OpenAPI emits `x-inferred-from-signal`. Generic vocabulary so future inference paths (cron jobs, env-flag-gated admin endpoints) can reuse it.
 
 ### Changed
 - **SKILL.md auth-signal block** rewritten. Signals 3–6 instructions now say "set `inferred_from_signal`, leave `triggered_by: []`" instead of "set `triggered_by` to the signal's file:line." Old instruction caused the synthesis agent to point `POST /auth/signup` at unrelated UI (e.g. the Reserve button) when no auth UI existed — what the QA report called "the invariant is effectively spoofed."
@@ -172,7 +211,8 @@ Bundles a connected sprint of work that landed together: cookie sessions + CSRF,
 ### Added
 - Initial release. SKILL.md runbook, JSON state schema, validator, model pinning, CLI installer.
 
-[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.15.1...HEAD
+[0.15.1]: https://github.com/jwolfsohn/backend-design/compare/v0.15.0...v0.15.1
 [0.11.0]: https://github.com/jwolfsohn/backend-design/compare/v0.7.0...v0.11.0
 [0.7.0]: https://github.com/jwolfsohn/backend-design/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/jwolfsohn/backend-design/compare/v0.5.0...v0.6.0
