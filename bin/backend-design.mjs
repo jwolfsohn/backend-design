@@ -97,16 +97,126 @@ const SESSION_STORE_OPTIONS = [
   },
 ];
 
-function banner() {
-  const line = pc.dim("─".repeat(56));
-  console.log("");
-  console.log(`  ${pc.bold(pc.cyan("backend-design"))} ${pc.dim(`v${pkg.version}`)}`);
-  console.log(`  ${pc.dim("design your backend from your frontend")}`);
-  console.log(`  ${line}`);
-  console.log("");
+// True-color helpers. Most modern terminals support 24-bit ANSI; older ones
+// just drop the styling and render plain text, which is fine.
+const supportsColor =
+  !process.env.NO_COLOR &&
+  process.env.TERM !== "dumb" &&
+  (process.env.FORCE_COLOR || process.stdout.isTTY);
+const rgb = (r, g, b, s) => (supportsColor ? `\x1b[38;2;${r};${g};${b}m${s}\x1b[0m` : s);
+
+// Light cyan-blue → medium blue → deep navy. Three stops, linear interpolation
+// per character.
+const GRADIENT_STOPS = [
+  [95, 212, 245],  // light cyan-blue
+  [60, 130, 220],  // medium blue
+  [25, 50, 140],   // deep navy
+];
+function gradient(text) {
+  const chars = [...text];
+  const n = chars.length;
+  return chars
+    .map((ch, i) => {
+      if (ch === " ") return ch;
+      const t = n === 1 ? 0 : i / (n - 1);
+      const seg = t * (GRADIENT_STOPS.length - 1);
+      const idx = Math.min(GRADIENT_STOPS.length - 2, Math.floor(seg));
+      const local = seg - idx;
+      const a = GRADIENT_STOPS[idx];
+      const b = GRADIENT_STOPS[idx + 1];
+      const r = Math.round(a[0] + (b[0] - a[0]) * local);
+      const g = Math.round(a[1] + (b[1] - a[1]) * local);
+      const bl = Math.round(a[2] + (b[2] - a[2]) * local);
+      return rgb(r, g, bl, ch);
+    })
+    .join("");
 }
 
-const step = (label) => console.log(`${pc.cyan("→")} ${label}`);
+// "BACKEND" on top, "DESIGN" centered below. Each row is 56 columns wide so
+// the gradient sweeps identically across both words.
+const BANNER_LINES = [
+  "██████   █████   ██████ ██   ██ ███████ ███   ██ ██████ ",
+  "██   ██ ██   ██ ██      ██  ██  ██      ████  ██ ██   ██",
+  "██████  ███████ ██      █████   █████   ██ ██ ██ ██   ██",
+  "██   ██ ██   ██ ██      ██  ██  ██      ██  ████ ██   ██",
+  "██████  ██   ██  ██████ ██   ██ ███████ ██   ███ ██████ ",
+  "                                                        ",
+  "      ██████  ███████ ███████ ██  ██████  ███   ██      ",
+  "      ██   ██ ██      ██      ██ ██       ████  ██      ",
+  "      ██   ██ █████   ███████ ██ ██   ███ ██ ██ ██      ",
+  "      ██   ██ ██           ██ ██ ██    ██ ██  ████      ",
+  "      ██████  ███████ ███████ ██  ██████  ██   ███      ",
+];
+
+const FEATURES = [
+  ["Frontend detection", "React · Next · Vue · Svelte · Angular · Astro …"],
+  ["Stack picker", "Express · Fastify · Hono · Next API · FastAPI"],
+  ["Auth chooser", "JWT · cookie sessions (CSRF) · none"],
+  ["Vibe-coder mode", "Stub orphan UI as 501 placeholders"],
+  ["s2ai schema", "Emit schema.mmd only, run s2ai yourself"],
+  ["Reviewable design", "Endpoints, DB schema, env, OpenAPI"],
+];
+
+function banner({ big = false } = {}) {
+  console.log("");
+  if (big) {
+    for (const line of BANNER_LINES) console.log("  " + gradient(line));
+    console.log("");
+    console.log(
+      "  " +
+        pc.dim("Design your backend from your frontend — ") +
+        gradient("detect, decide, scaffold.")
+    );
+    console.log("");
+    for (let i = 0; i < FEATURES.length; i++) {
+      const [name, desc] = FEATURES[i];
+      const num = pc.dim(String(i + 1).padStart(2, "0"));
+      const star = gradient("★");
+      const label = pc.bold(name.padEnd(20));
+      console.log(`  ${num} ${star} ${label} ${pc.dim(desc)}`);
+    }
+    console.log("");
+    console.log("  " + pc.dim("─".repeat(58)));
+    console.log("");
+  } else {
+    const line = pc.dim("─".repeat(56));
+    console.log(`  ${pc.bold(gradient("backend-design"))} ${pc.dim(`v${pkg.version}`)}`);
+    console.log(`  ${pc.dim("design your backend from your frontend")}`);
+    console.log(`  ${line}`);
+    console.log("");
+  }
+}
+
+// Rounded box around aligned key/value rows. Width auto-fits the longest row,
+// with a soft minimum so single-row panels don't look cramped.
+function infoBox(title, rows, { minWidth = 52 } = {}) {
+  const padKey = Math.max(0, ...rows.map(([k]) => k.length));
+  const formatted = rows.map(([k, v]) => `${k.padEnd(padKey)}  ${v}`);
+  const contentWidth = Math.max(minWidth - 4, title.length, ...formatted.map((r) => visibleLen(r)));
+  const top = "╭" + "─".repeat(contentWidth + 2) + "╮";
+  const bot = "╰" + "─".repeat(contentWidth + 2) + "╯";
+  const side = pc.dim("│");
+  console.log("  " + pc.dim(top));
+  console.log("  " + side + " " + pc.bold(gradient(title)).padEnd(contentWidth + ansiPad(pc.bold(gradient(title)))) + " " + side);
+  console.log("  " + pc.dim("├" + "─".repeat(contentWidth + 2) + "┤"));
+  for (const [k, v] of rows) {
+    const key = pc.dim(k.padEnd(padKey));
+    const visible = `${k.padEnd(padKey)}  ${v}`;
+    const pad = contentWidth - visibleLen(visible);
+    console.log("  " + side + " " + key + "  " + v + " ".repeat(Math.max(0, pad)) + " " + side);
+  }
+  console.log("  " + pc.dim(bot));
+}
+
+// Strip ANSI escape codes when measuring visible width (\x1b[…m sequences).
+function visibleLen(s) {
+  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
+}
+function ansiPad(s) {
+  return s.length - visibleLen(s);
+}
+
+const step = (label) => console.log(`${gradient("→")} ${label}`);
 const ok = (label) => console.log(`  ${pc.green("✓")} ${label}`);
 const warn = (label) => console.log(`  ${pc.yellow("!")} ${label}`);
 const fail = (label) => console.log(`  ${pc.red("✗")} ${label}`);
@@ -328,14 +438,14 @@ function ensureInstalled(cwd) {
 }
 
 async function install() {
-  banner();
+  banner({ big: true });
   step("Installing skill globally into ~/.claude/skills/");
   linkSkillAt(globalSkillPath());
   blank();
   console.log(pc.bold("  Next steps"));
   console.log(`  ${pc.dim("1.")} ${pc.dim("cd into a frontend project (any modern framework)")}`);
-  console.log(`  ${pc.dim("2.")} ${pc.cyan("backend-design start")}  ${pc.dim("# detect frontend, pick stack, write config")}`);
-  console.log(`  ${pc.dim("3.")} Start a Claude Code session in that directory (or restart an existing one), then run ${pc.cyan("/backend-design")}`);
+  console.log(`  ${pc.dim("2.")} ${gradient("backend-design start")}  ${pc.dim("# detect frontend, pick stack, write config")}`);
+  console.log(`  ${pc.dim("3.")} Start a Claude Code session in that directory (or restart an existing one), then run ${gradient("/backend-design")}`);
   blank();
 }
 
@@ -359,7 +469,7 @@ async function uninstall() {
 }
 
 async function start() {
-  banner();
+  banner({ big: true });
   const cwd = process.cwd();
   const installState = ensureInstalled(cwd);
 
@@ -535,20 +645,21 @@ async function start() {
   ok(`wrote ${pc.dim(".backend-design/config.json")}`);
   blank();
 
-  console.log(pc.bold("  Summary"));
-  console.log(`  ${pc.dim("stack:")}     ${stack.label}`);
-  console.log(`  ${pc.dim("auth:")}      ${authResp.auth}${sessionStore ? ` (store: ${sessionStore})` : ""}`);
-  console.log(`  ${pc.dim("vibe:")}      ${vibeResp.vibe_coder ? "on" : "off"}`);
-  console.log(`  ${pc.dim("output:")}    ${outDir}`);
-  console.log(`  ${pc.dim("pkg mgr:")}   ${pkgManager}`);
+  infoBox(`backend-design v${pkg.version}`, [
+    ["Stack", stack.label],
+    ["Auth", `${authResp.auth}${sessionStore ? ` (store: ${sessionStore})` : ""}`],
+    ["Vibe", vibeResp.vibe_coder ? "on" : "off"],
+    ["Output", outDir],
+    ["Pkg mgr", pkgManager],
+  ]);
   blank();
   console.log(pc.bold("  Next step"));
   if (installState === "fresh") {
     console.log(`  The skill was just registered, so Claude Code needs a fresh session to see it.`);
-    console.log(`  ${pc.dim("• No session open here?")} Run ${pc.cyan("claude")} in this directory, then ${pc.cyan("/backend-design")}.`);
-    console.log(`  ${pc.dim("• Session already open?")} Exit it (${pc.cyan("/exit")}) and run ${pc.cyan("claude")} again — skills load at startup.`);
+    console.log(`  ${pc.dim("• No session open here?")} Run ${gradient("claude")} in this directory, then ${gradient("/backend-design")}.`);
+    console.log(`  ${pc.dim("• Session already open?")} Exit it (${gradient("/exit")}) and run ${gradient("claude")} again — skills load at startup.`);
   } else {
-    console.log(`  Run ${pc.cyan("/backend-design")} in Claude Code ${pc.dim("(or just say: 'build a backend for this frontend')")}`);
+    console.log(`  Run ${gradient("/backend-design")} in Claude Code ${pc.dim("(or just say: 'build a backend for this frontend')")}`);
   }
   blank();
 }
@@ -660,15 +771,20 @@ async function status() {
 }
 
 function help() {
-  banner();
+  banner({ big: true });
   console.log(pc.bold("  Commands"));
-  console.log(`  ${pc.cyan("install")}    Symlink the skill globally into ~/.claude/skills/ (start auto-installs project-local on first run)`);
-  console.log(`  ${pc.cyan("uninstall")}  Remove the global and/or project-local symlink`);
-  console.log(`  ${pc.cyan("start")}      Pick a stack and write .backend-design/config.json`);
-  console.log(`  ${pc.cyan("validate")}   Check .backend-design/state/*.json invariants`);
-  console.log(`  ${pc.cyan("gaps")}       Detect missing env vars, unwired buttons, missing auth UI`);
-  console.log(`  ${pc.cyan("status")}     Show phase progress, frontend signature, and open gap counts`);
-  console.log(`  ${pc.cyan("reset")}      Delete .backend-design/ and generated docs to start fresh`);
+  const cmds = [
+    ["install", "Symlink the skill globally into ~/.claude/skills/"],
+    ["uninstall", "Remove the global and/or project-local symlink"],
+    ["start", "Pick a stack and write .backend-design/config.json"],
+    ["validate", "Check .backend-design/state/*.json invariants"],
+    ["gaps", "Detect missing env vars, unwired buttons, missing auth UI"],
+    ["status", "Show phase progress, frontend signature, and open gaps"],
+    ["reset", "Delete .backend-design/ and generated docs to start fresh"],
+  ];
+  for (const [name, desc] of cmds) {
+    console.log(`  ${gradient(name.padEnd(10))}  ${pc.dim(desc)}`);
+  }
   blank();
   console.log(pc.bold("  Typical flow"));
   console.log(`  ${pc.dim("$")} cd my-app`);

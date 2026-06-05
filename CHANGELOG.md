@@ -6,6 +6,15 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.14.0] — 2026-06-05
+
+CLI cosmetic overhaul — banner, gradient, summary panel.
+
+### Changed
+- **New banner.** `npx backend-design start`, `install`, and `help` now print a stacked block-letter `BACKEND` / `DESIGN` wordmark, a numbered feature list (`01 ★ …`), and a tagline. Replaces the previous three-line text header. Status commands (`validate`, `gaps`, `status`, `uninstall`, `reset`) keep the compact one-line header.
+- **24-bit gradient.** The wordmark, step arrow (`→`), and inline commands (`/backend-design`, `claude`) sweep light cyan-blue → medium blue → deep navy via raw `\x1b[38;2;R;G;Bm` escapes. Honors `FORCE_COLOR` / `NO_COLOR` / `TERM=dumb`.
+- **Boxed summary panel.** The end-of-`start` summary is now a rounded `╭─╮ │ ╰─╯` box with aligned key/value rows (Stack / Auth / Vibe / Output / Pkg mgr) and a gradient title.
+
 ## [0.13.0] — 2026-06-05
 
 Scopes the auto-install to the project you're scaffolding for instead of the global skills directory.
