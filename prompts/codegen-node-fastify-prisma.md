@@ -2,7 +2,7 @@
 
 **Write every file under `config.output_dir`** from `.backend-design/config.json` (default `./backend`). The layout below uses `backend/` as the placeholder — substitute the real value.
 
-**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `plugins/auth.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not register `@fastify/jwt`. Do not add `JWT_SECRET` to `.env.example`. No endpoint may use `preHandler: [fastify.authenticate]`.
+**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `plugins/auth.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` (in particular: when `auth.inferred_from === "judgment:user_owned_mutations"` the `User` entity **must** be scaffolded as a placeholder table — it exists so nullable `user_id` FKs on other entities resolve; do not add `password_hash` or wire any auth preHandler to it). Do not register `@fastify/jwt`. Do not add `JWT_SECRET` to `.env.example`. No endpoint may use `preHandler: [fastify.authenticate]`.
 
 **If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT instructions. The two strategies are mutually exclusive.
 

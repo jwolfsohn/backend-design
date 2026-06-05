@@ -16,6 +16,22 @@ const FILES = [
 
 const VALID_REL_TYPES = ["one-to-one", "one-to-many", "many-to-one", "many-to-many"];
 
+// Legal values for the `inferred_from_signal` endpoint escape-hatch field. Mirrored in
+// SKILL.md (auth-signal section) and prompts/inventory/endpoints.md. Keep them in sync.
+const LEGAL_INFERRED_SIGNALS = new Set([
+  "auth_required_screen",
+  "token_storage_key",
+  "auth_header",
+  "auth_path",
+  "judgment:user_owned_mutations",
+]);
+
+// Signal-7 forbidden auth endpoints. Catches signup/login/logout (with/without hyphen and the
+// register/signin/signout synonyms) at any depth of /auth/ nesting (/auth/, /api/auth/, /v1/auth/,
+// etc.). Deliberately does NOT match /auth/refresh, /auth/me, or other auth-adjacent paths —
+// those aren't endpoints signal 7 contracts against.
+const FORBIDDEN_AUTH_ENDPOINT_RE = /^POST\s+(?:\/[a-z0-9-]+)*\/auth\/(?:sign-?up|register|log-?in|sign-?in|log-?out|sign-?out)\b/i;
+
 export function validate(cwd = process.cwd()) {
   const stateDir = join(cwd, ".backend-design", "state");
   const errors = [];
@@ -92,6 +108,12 @@ export function validate(cwd = process.cwd()) {
 
     if (!ep.triggered_by?.length && !ep.is_webhook && !ep.inferred_from_signal) {
       errors.push(`Endpoint ${key} has no UI trigger — frontend is the source of truth (set is_webhook:true for incoming webhooks, or inferred_from_signal:"<name>" when the endpoint was inferred from a non-UI signal like auth_required_screen, token_storage_key, auth_header, auth_path)`);
+    }
+    if (ep.is_webhook && ep.inferred_from_signal) {
+      errors.push(`Endpoint ${key} has both is_webhook:true and inferred_from_signal — pick one; an endpoint is either an incoming webhook OR inferred from a non-UI signal, not both`);
+    }
+    if (ep.inferred_from_signal && !LEGAL_INFERRED_SIGNALS.has(ep.inferred_from_signal)) {
+      errors.push(`Endpoint ${key} has inferred_from_signal:"${ep.inferred_from_signal}" — not in the legal set (${[...LEGAL_INFERRED_SIGNALS].join(", ")})`);
     }
     if (!isPhase1Only && !("auth" in ep)) {
       errors.push(`Endpoint ${key} is missing 'auth' field (expected 'required' or 'none')`);
@@ -204,6 +226,38 @@ export function validate(cwd = process.cwd()) {
     }
   } else if (auth?.store) {
     warnings.push(`auth.store is set ('${auth.store}') but strategy is '${auth.strategy}' — only the 'session' strategy uses a store`);
+  }
+
+  // Coherence: strategy "none" should not also signal signup. detect-gaps.mjs treats auth.signup
+  // as authoritative for the "missing signup form" blocker; pairing it with strategy:"none" produces
+  // a spurious blocker for designs that intentionally ship anonymously.
+  if (auth?.strategy === "none" && auth?.signup === true) {
+    errors.push("auth.strategy is 'none' but auth.signup is true — pick a real strategy or set signup: false");
+  }
+
+  // Signal 7 (judgment:user_owned_mutations) emits a placeholder users entity only. v1 ships
+  // anonymously: no /auth/* endpoints, no password storage, no signup flag. Backstop the shape
+  // so a partial agent implementation can't drift past the validator.
+  if (!isPhase1Only && auth?.inferred_from === "judgment:user_owned_mutations") {
+    if (auth.strategy !== "none") {
+      errors.push(`auth.inferred_from is 'judgment:user_owned_mutations' but auth.strategy is '${auth.strategy ?? "(missing)"}' — judgment-call signals require strategy: "none"`);
+    }
+    if (auth.signup === true) {
+      errors.push("auth.inferred_from is 'judgment:user_owned_mutations' but auth.signup is true — set signup: false (no signup endpoint is emitted under this signal)");
+    }
+    for (const ep of endpoints) {
+      if (!ep.method || !ep.path) continue;
+      const key = `${ep.method.toUpperCase()} ${ep.path}`;
+      if (FORBIDDEN_AUTH_ENDPOINT_RE.test(key)) {
+        errors.push(`auth.inferred_from is 'judgment:user_owned_mutations' but endpoint '${key}' is present — signal 7 ships anonymously, no auth endpoints should be emitted`);
+      }
+    }
+    if (authEntityName) {
+      const authEnt = entityByName.get(authEntityName);
+      if (authEnt && (authEnt.fields ?? []).some((f) => f.name === "password_hash")) {
+        errors.push(`auth.inferred_from is 'judgment:user_owned_mutations' but entity '${authEntityName}' has a 'password_hash' field — placeholder users should not store credentials`);
+      }
+    }
   }
 
   // Entities exempt from "is this displayed on a screen" and "best-practice columns" warnings.

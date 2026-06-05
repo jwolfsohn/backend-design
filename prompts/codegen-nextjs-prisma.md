@@ -2,7 +2,7 @@
 
 Scaffold backend code **inside the existing Next.js project** (do not create a separate `backend/` directory). The frontend and backend share a single Next.js app — this is the monorepo / Vercel-friendly path.
 
-**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `lib/auth.ts`, `lib/password.ts`, the `app/api/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not add `JWT_SECRET` to `.env.example`. Protected handlers should not exist (every endpoint should have `auth: "none"` already, post-Phase-2).
+**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `lib/auth.ts`, `lib/password.ts`, the `app/api/auth/*` routes, or the `User` entity unless it appears in `entities.json` (in particular: when `auth.inferred_from === "judgment:user_owned_mutations"` the `User` entity **must** be scaffolded as a placeholder table — it exists so nullable `user_id` FKs on other entities resolve; do not add `password_hash` or wire any auth helper to it). Do not add `JWT_SECRET` to `.env.example`. Protected handlers should not exist (every endpoint should have `auth: "none"` already, post-Phase-2).
 
 **If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
 

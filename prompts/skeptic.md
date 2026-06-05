@@ -6,6 +6,7 @@ You are reviewing a backend design produced by the synthesis agent. Read `.backe
 - Entity fields named `email`, `phone`, `ssn`, `dob`, `address` exposed in list endpoints with `auth: "none"` — PII exposure.
 - Auth-required endpoints whose `triggered_by` is a clearly public screen.
 - Auth endpoints whose `inferred_from_signal` doesn't match `auth.json.inferred_from` — sign that the auth path is mis-categorized (e.g. endpoint says `auth_path` but `auth.json` says `token_storage_key`).
+- Entities with a `user_id` FK (or any FK to the auth entity) when `auth.strategy === "none"` and `auth.inferred_from` starts with `judgment:` — writes will accept `user_id` from the request body (untrusted) or leave it NULL. The synthesis-emitted Tier-1 question asks whether to add auth at all; this is the orthogonal question of what the write contract should be while auth is absent. Surface as: "v1 ships anonymously per signal 7 — should the write endpoint at least reject client-supplied `user_id` to avoid impersonation when auth later lands?"
 
 **Scalability & data integrity**
 - List endpoints with `filterable_fields` or `sortable_fields` where the target entity has no matching `indexes` entry covering those columns.

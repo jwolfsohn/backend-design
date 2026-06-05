@@ -2,7 +2,7 @@
 
 **Write every file under `config.output_dir`** from `.backend-design/config.json` (default `./backend`). The layout below uses `backend/` as the placeholder — substitute the real value.
 
-**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `middleware/auth.ts`, `lib/jwt.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` for a non-auth reason. Do not add `JWT_SECRET` to `.env.example`. No route may read `c.get('user')`.
+**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `middleware/auth.ts`, `lib/jwt.ts`, `lib/password.ts`, the `/auth/*` routes, or the `User` entity unless it appears in `entities.json` (in particular: when `auth.inferred_from === "judgment:user_owned_mutations"` the `User` entity **must** be scaffolded as a placeholder table — it exists so nullable `user_id` FKs on other entities resolve; do not add `password_hash` or wire any auth middleware to it). Do not add `JWT_SECRET` to `.env.example`. No route may read `c.get('user')`.
 
 **If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
 

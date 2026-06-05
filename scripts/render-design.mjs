@@ -208,10 +208,12 @@ function endpointsSection(state) {
       || (ep.is_webhook ? `webhook (${ep.webhook_source ?? "?"})` : null)
       || (ep.inferred_from_signal ? `inferred from \`${ep.inferred_from_signal}\` (no UI)` : null)
       || "—";
+    // Flag order is severity-descending: placeholder needs replacement before shipping; inferred
+    // signals a missing UI trigger; webhook/multipart are purely informational.
     const flags = [];
     if (ep.temporary) flags.push("⚠ placeholder");
-    if (ep.is_webhook) flags.push("webhook");
     if (ep.inferred_from_signal) flags.push("inferred");
+    if (ep.is_webhook) flags.push("webhook");
     if (ep.content_type === "multipart/form-data") flags.push("multipart");
     const methodCell = flags.length ? `\`${method}\`<br>_${flags.join(", ")}_` : `\`${method}\``;
     out.push(`| ${methodCell} | \`${path}\` | ${auth}${role} | ${body} | ${response} | ${trig} |`);
@@ -241,7 +243,16 @@ function authSection(state) {
   }
   if (auth.password_hash) out.push(`- **Password hashing**: \`${auth.password_hash}\`${auth.bcrypt_cost ? ` (cost ${auth.bcrypt_cost})` : ""}`);
   if (auth.inferred_from && auth.inferred_from !== "signup_form" && auth.inferred_from !== "login_form") {
-    out.push(`- **Inferred from**: \`${auth.inferred_from}\` (no login/signup form in the UI — backend was scaffolded from this signal; the next-steps doc has details)`);
+    // Judgment-call signals (currently signal 7: judgment:user_owned_mutations) emit a placeholder
+    // users entity but no auth flow — the rendered message must not claim a backend was scaffolded.
+    // The "no auth flow scaffolded" claim is safe specifically because we also gate on
+    // strategy === "none". If a future judgment-call signal scaffolds an auth backend, add a new
+    // branch rather than relaxing this one.
+    if (auth.strategy === "none" && auth.inferred_from.startsWith("judgment:")) {
+      out.push(`- **Inferred from**: \`${auth.inferred_from}\` (placeholder \`users\` entity only — no auth flow scaffolded; v1 ships anonymously. See the matching Open Question.)`);
+    } else {
+      out.push(`- **Inferred from**: \`${auth.inferred_from}\` (no login/signup form in the UI — backend was scaffolded from this signal; the next-steps doc has details)`);
+    }
   }
   out.push(`- **Signup**: ${yesNo(auth.signup)}`);
   out.push(`- **Email verification**: ${yesNo(auth.email_verification)}`);

@@ -2,7 +2,7 @@
 
 **Write every file under `config.output_dir`** from `.backend-design/config.json` (default `./backend`). The layout below uses `backend/` as the placeholder — substitute the real value.
 
-**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `app/lib/jwt.py`, `app/lib/password.py`, the `app/routers/auth.py` file, or the `User` model unless it appears in `entities.json` for a non-auth reason. Drop `python-jose` and `bcrypt` from dependencies. Do not add `JWT_SECRET` to `.env.example`. Do not include `get_current_user` in `app/deps.py`. No endpoint may use `Depends(get_current_user)`.
+**If `auth.json.strategy === "none"`:** skip everything auth-related — do not create `app/lib/jwt.py`, `app/lib/password.py`, the `app/routers/auth.py` file, or the `User` model unless it appears in `entities.json` (in particular: when `auth.inferred_from === "judgment:user_owned_mutations"` the `User` model **must** be scaffolded as a placeholder table — it exists so nullable `user_id` FKs on other models resolve; do not add `password_hash` or wire any auth dependency to it). Drop `python-jose` and `bcrypt` from dependencies. Do not add `JWT_SECRET` to `.env.example`. Do not include `get_current_user` in `app/deps.py`. No endpoint may use `Depends(get_current_user)`.
 
 **If `auth.json.strategy === "session"`:** follow the "Cookie sessions + CSRF" section below instead of the JWT path. Mutually exclusive with `jwt`.
 
