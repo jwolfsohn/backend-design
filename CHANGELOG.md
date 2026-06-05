@@ -6,6 +6,19 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-06-05
+
+Packaging and onboarding polish — README restructure, install flow collapse, banner.
+
+### Added
+- **Auto-registered skill on first `start`.** `npx backend-design start` now checks `~/.claude/skills/backend-design` at the top of the command and silently symlinks the package into place if it isn't there. New users go from four copy-pastes (`npm i -g`, `backend-design install`, `cd`, `start`) to two (`cd`, `npx backend-design start`). The `install` command is preserved as an explicit opt-in for durable installs that survive npx cache eviction.
+- **`docs/banner.svg`** — pixel-art project banner. Bundled in the published tarball so it renders on the npm package page, not just GitHub.
+- **README badges** (npm version, monthly downloads, Node engine, MIT license) under the banner.
+
+### Changed
+- **README structure.** Banner + tagline + badges + a two-line **Quick start** are now the first thing on the page. The deep "Install" section was rewritten as **Durable install (optional)** and moved below "How it works". Net effect: the first install command is at roughly line ~20 instead of line ~108.
+- **`help` output** drops the explicit `install` line from the "Typical flow" block (it's now implicit).
+
 ## [0.11.0] — 2026-06-02
 
 Bundles a connected sprint of work that landed together: cookie sessions + CSRF, the OpenAPI 3.1 contract with stack-native Swagger UI, the Phase 2.6 skeptic pass, generated tests + a security baseline for every scaffold, and the new inference policies (auth from non-UI signals, best-practice columns by default, domain-pattern detection). The previous 0.8.0, 0.9.0, and 0.10.0 tags were rolled into this release rather than left as separate same-day bumps.

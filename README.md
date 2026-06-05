@@ -1,6 +1,33 @@
-# backend-design
+<p align="center">
+  <img src="docs/banner.svg" alt="backend-design" width="800">
+</p>
 
-A [Claude Code](https://claude.com/claude-code) skill that reads an existing frontend in any modern web framework and scaffolds a matching backend in the stack of your choice.
+<p align="center">
+  <strong>Design your backend from your frontend.</strong><br>
+  A <a href="https://claude.com/claude-code">Claude Code</a> skill that reads any modern web frontend and scaffolds a matching backend in the stack of your choice.
+</p>
+
+<p align="center">
+  <a href="https://www.npmjs.com/package/backend-design"><img src="https://img.shields.io/npm/v/backend-design.svg?color=06b6d4&label=npm" alt="npm version"></a>
+  <a href="https://www.npmjs.com/package/backend-design"><img src="https://img.shields.io/npm/dm/backend-design.svg?color=06b6d4" alt="npm downloads"></a>
+  <a href="#"><img src="https://img.shields.io/node/v/backend-design.svg?color=06b6d4" alt="Node.js v20+"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/npm/l/backend-design.svg?color=06b6d4" alt="MIT License"></a>
+</p>
+
+## Quick start
+
+```bash
+cd my-frontend-project
+npx backend-design start
+```
+
+Then open Claude Code in the same directory and run:
+
+```
+/backend-design
+```
+
+That's it. The skill auto-registers in `~/.claude/skills/` on first run, picks up your stack + auth choices from the `start` flow, and walks through inventory, design review, and code generation.
 
 > See [CHANGELOG.md](CHANGELOG.md) for release notes.
 
@@ -24,18 +51,6 @@ Auto-detected via `package.json` and a couple of key files — no full-codebase 
 
 Each framework has a dedicated patterns file under `prompts/patterns/` (e.g. `prompts/patterns/vue-spa.md`, `prompts/patterns/sveltekit.md`, `prompts/patterns/angular.md`) so the inventory agents grep the right files.
 
-## What it does
-
-1. **Inventories** every screen, component, network call, form, button, and auth surface — in parallel, writing structured JSON state.
-2. **Synthesizes** entities, relationships, endpoints, an auth model, and a list of open product-intent questions **each with a recommended answer** — so you have a default to accept rather than an open prompt to stare at. Auth is auto-scaffolded when implied (auth-gated screens, token-shaped storage keys, bearer headers, or `/api/auth/*` fetches — not just when a login form exists). Every entity gets best-practice columns by default: `deleted_at` (soft delete), `version` (optimistic lock), and `created_by`/`updated_by` (audit FKs). Domain-shape patterns (e-commerce, chat, social, booking, CMS) are surfaced as Open Questions with recommended entities, never silently added.
-3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
-4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets, per-source webhook secrets, email provider keys, `UPLOADS_DIR`), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions and a copy-pasteable `backend-design.env.example` at the repo root.
-5. **Skeptic pass** — a single adversarial Sonnet agent re-reads the design and surfaces concrete-pattern concerns (IDOR-shaped path params with no scoping, list endpoints with no matching index, unbounded webhook handlers, missing health endpoints, PII exposure) as additional Open Questions tagged `category: "skeptic"`. Capped at 8 findings per run.
-6. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
-7. **Scaffolds** a runnable backend in your chosen stack once you approve — every generated stack ships with vitest/pytest tests against a real ephemeral Postgres (via testcontainers), a security baseline (helmet/secure-headers, tighter rate limits on writes, CORS allowlist that refuses `*` in production, structured request logging), and an **OpenAPI 3.1 contract** (`./openapi.json` at repo root) plus a stack-native Swagger UI at `/docs`. Sessions strategy adds CSRF middleware per stack.
-
-On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
-
 ## Supported stacks
 
 You pick one when you run `npx backend-design start`:
@@ -56,6 +71,18 @@ Auth: pick one when you run `npx backend-design start`:
 | **JWT** | SPAs, mobile clients, anywhere stateless tokens fit | bcrypt password hashing, `JWT_SECRET`-signed access tokens, `Authorization: Bearer` middleware. |
 | **Cookie session** | Browser-only apps where real logout / server-side revocation matters | `httpOnly` / `sameSite: "lax"` cookie, Postgres-backed sessions (or Redis via `SESSION_STORE=redis`), CSRF middleware per stack with `X-CSRF-Token`. |
 | **None** | App has no users | Skips all auth wiring; refuses to scaffold endpoints with `auth: "required"`. |
+
+## What it does
+
+1. **Inventories** every screen, component, network call, form, button, and auth surface — in parallel, writing structured JSON state.
+2. **Synthesizes** entities, relationships, endpoints, an auth model, and a list of open product-intent questions **each with a recommended answer** — so you have a default to accept rather than an open prompt to stare at. Auth is auto-scaffolded when implied (auth-gated screens, token-shaped storage keys, bearer headers, or `/api/auth/*` fetches — not just when a login form exists). Every entity gets best-practice columns by default: `deleted_at` (soft delete), `version` (optimistic lock), and `created_by`/`updated_by` (audit FKs). Domain-shape patterns (e-commerce, chat, social, booking, CMS) are surfaced as Open Questions with recommended entities, never silently added.
+3. **Validates** the design against invariants (every FK resolves, every endpoint has a UI trigger, every entity has a PK, etc.).
+4. **Detects gaps** — missing env vars (`DATABASE_URL`, `JWT_SECRET`, OAuth/Stripe secrets, per-source webhook secrets, email provider keys, `UPLOADS_DIR`), missing auth UI, unwired buttons. Writes a separate `backend-design-next-steps.md` with prescriptive fix instructions and a copy-pasteable `backend-design.env.example` at the repo root.
+5. **Skeptic pass** — a single adversarial Sonnet agent re-reads the design and surfaces concrete-pattern concerns (IDOR-shaped path params with no scoping, list endpoints with no matching index, unbounded webhook handlers, missing health endpoints, PII exposure) as additional Open Questions tagged `category: "skeptic"`. Capped at 8 findings per run.
+6. **Reviews** — produces a human-readable `backend-design.md` (deterministically rendered from the state JSON) and pauses for your approval.
+7. **Scaffolds** a runnable backend in your chosen stack once you approve — every generated stack ships with vitest/pytest tests against a real ephemeral Postgres (via testcontainers), a security baseline (helmet/secure-headers, tighter rate limits on writes, CORS allowlist that refuses `*` in production, structured request logging), and an **OpenAPI 3.1 contract** (`./openapi.json` at repo root) plus a stack-native Swagger UI at `/docs`. Sessions strategy adds CSRF middleware per stack.
+
+On re-runs, a Phase 0 resumption check compares the current frontend signature (git HEAD + dirty hash, or content hash) to the prior run and short-circuits to the right step — re-running gap detection if everything's done, jumping straight to scaffolding if the design is approved, or re-doing inventory only if the frontend changed.
 
 ## Design choices (and why)
 
@@ -93,56 +120,17 @@ Owning the boundaries so you don't waste time finding out later.
 
 `npx backend-design start` asks whether to scaffold placeholder endpoints for orphan UI signals (e.g. a "Become a host" button with no handler). When **on**, Phase 2 emits stub endpoints with `temporary: true` and codegen wraps them in 501 handlers that throw loudly in dev. Paths are best-guesses — the next-steps doc flags each one for review. Default is **off** (strict mode: orphan buttons go in next-steps as wire-up work, no endpoints invented).
 
-## Platform support
-
-macOS and Linux. The installer uses symlinks and the file-count check shells out to `find`/`wc`; Windows users should run inside WSL2.
-
-## Install
-
-Pick one of:
-
-```bash
-# Durable: install globally, then symlink. Survives npm cache eviction.
-npm i -g backend-design
-backend-design install
-
-# Or from a clone (most stable for development):
-git clone https://github.com/jwolfsohn/backend-design && cd backend-design
-node bin/backend-design.mjs install
-```
-
-Either way you'll get `~/.claude/skills/backend-design` pointing at the package. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
-
-`npx backend-design install` works but symlinks into the npx cache, which can be pruned without warning — use one of the methods above for any non-throwaway setup.
-
-Uninstall: `backend-design uninstall`.
-
-## Use
-
-```bash
-cd my-frontend-project
-npx backend-design start      # interactive: pick stack, auth, output dir
-```
-
-Then open Claude Code in the same directory and run:
-
-```
-/backend-design
-```
-
-The skill walks through inventory, synthesis, validation, review, and code generation.
-
 ## Commands
 
 | Command | What it does |
 |---------|--------------|
-| `npx backend-design install` | Symlink the skill into `~/.claude/skills/` |
-| `npx backend-design uninstall` | Remove the symlink |
-| `npx backend-design start` | Interactive: pick stack + auth + vibe-coder mode, write `.backend-design/config.json` |
+| `npx backend-design start` | Interactive: pick stack + auth + vibe-coder mode, write `.backend-design/config.json`. **Auto-registers the skill on first run.** |
 | `npx backend-design validate` | Validate `.backend-design/state/*.json` against invariants |
 | `npx backend-design gaps` | Re-detect missing env vars, unwired buttons, missing auth UI; rewrite `backend-design-next-steps.md` |
 | `npx backend-design status` | Show phase progress, frontend signature, and open gap counts |
 | `npx backend-design reset` | Delete `.backend-design/` and the generated docs to start fresh (asks for confirmation) |
+| `npx backend-design install` | Manually symlink the skill into `~/.claude/skills/` (rarely needed — `start` does this automatically) |
+| `npx backend-design uninstall` | Remove the symlink |
 | `npx backend-design help` | Show usage |
 
 ## State files
@@ -230,6 +218,32 @@ Expect a few dollars per end-to-end run on a typical app, more on large or convo
 Each phase writes a timestamp into `checkpoint.json` so the next invocation can resume cleanly.
 
 No custom subagent definitions, no plugins — just the built-in Claude Code agents with model pinning and stack-specific prompts.
+
+## Durable install (optional)
+
+`npx backend-design start` auto-registers the skill on first run, which is enough for most users. The symlink it creates points at npx's cache, though, so it can break when the cache is pruned.
+
+For a permanent install that survives that:
+
+```bash
+npm i -g backend-design
+backend-design install
+```
+
+Or from a clone (most stable for development):
+
+```bash
+git clone https://github.com/jwolfsohn/backend-design && cd backend-design
+node bin/backend-design.mjs install
+```
+
+Either way you'll get `~/.claude/skills/backend-design` pointing at the package. Restart Claude Code (or start a new session) and the skill appears in the available-skills list.
+
+Uninstall: `backend-design uninstall`.
+
+## Platform support
+
+macOS and Linux. The installer uses symlinks and the file-count check shells out to `find`/`wc`; Windows users should run inside WSL2.
 
 ## License
 

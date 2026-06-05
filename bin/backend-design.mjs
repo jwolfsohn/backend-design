@@ -286,28 +286,46 @@ function countSourceFiles(cwd, patterns_key) {
   }
 }
 
-async function install() {
-  banner();
+function skillTargetPath() {
+  return join(homedir(), ".claude", "skills", "backend-design");
+}
+
+function linkSkill({ silent = false } = {}) {
   if (process.platform === "win32") {
     fail("Windows is not supported (the install needs symlinks + Unix tooling).");
     dim("Use WSL2 or run on macOS/Linux.");
     blank();
     process.exit(1);
   }
-  step("Installing skill into ~/.claude/skills/");
   const skillsDir = join(homedir(), ".claude", "skills");
-  const target = join(skillsDir, "backend-design");
+  const target = skillTargetPath();
   mkdirSync(skillsDir, { recursive: true });
-  if (pathExists(target)) {
-    unlinkSync(target);
-    dim(`removed existing: ${target}`);
-  }
+  const existed = pathExists(target);
+  if (existed) unlinkSync(target);
   symlinkSync(pkgRoot, target, "dir");
-  ok(`linked: ${pc.dim(target + " → " + pkgRoot)}`);
+  if (!silent) {
+    if (existed) dim(`replaced existing symlink: ${target}`);
+    ok(`linked: ${pc.dim(target + " → " + pkgRoot)}`);
+  } else {
+    ok(`skill registered at ${pc.dim("~/.claude/skills/backend-design")}`);
+  }
   if (pkgRoot.includes("/_npx/") || pkgRoot.includes("\\_npx\\")) {
     warn("install source is npx's cache — the symlink may break when the cache is cleared.");
-    dim("For a durable install: `npm i -g backend-design` then `backend-design install`, or clone the repo and run `node bin/backend-design.mjs install` from the clone.");
+    dim("For a durable install: `npm i -g backend-design && backend-design install`.");
   }
+}
+
+function ensureInstalled() {
+  if (pathExists(skillTargetPath())) return;
+  step("First-time setup — registering skill");
+  linkSkill({ silent: true });
+  blank();
+}
+
+async function install() {
+  banner();
+  step("Installing skill into ~/.claude/skills/");
+  linkSkill();
   blank();
   console.log(pc.bold("  Next steps"));
   console.log(`  ${pc.dim("1.")} ${pc.dim("cd into a frontend project (any modern framework)")}`);
@@ -330,6 +348,7 @@ async function uninstall() {
 
 async function start() {
   banner();
+  ensureInstalled();
   const cwd = process.cwd();
 
   step("Checking working directory");
@@ -635,9 +654,8 @@ function help() {
   console.log(`  ${pc.cyan("reset")}      Delete .backend-design/ and generated docs to start fresh`);
   blank();
   console.log(pc.bold("  Typical flow"));
-  console.log(`  ${pc.dim("$")} npx backend-design install`);
   console.log(`  ${pc.dim("$")} cd my-app`);
-  console.log(`  ${pc.dim("$")} npx backend-design start`);
+  console.log(`  ${pc.dim("$")} npx backend-design start  ${pc.dim("# auto-registers the skill on first run")}`);
   console.log(`  ${pc.dim("$")} claude  ${pc.dim("# then: /backend-design")}`);
   blank();
 }
