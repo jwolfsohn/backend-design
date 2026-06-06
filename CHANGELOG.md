@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.15.2] — 2026-06-05
+
+Maintenance release. No new features. Closes two signal-7 recall gaps caught by the recipenest dogfood, fixes two OpenAPI bugs (session-auth had no security requirement, every body field was required), expands env-file detection so lowercase keys and `.env.development*` actually count, extracts a shared `scripts/state.mjs` to kill drift across the renderers, and switches every generated-file write to a temp-then-rename so an interrupted writer can't leave a half-written artifact at the user-visible path.
+
+### Fixed
+- **OpenAPI session auth lost.** Protected endpoints in a session-strategy design rendered without an `op.security` requirement because the renderer only branched on JWT. Session designs now emit `security: [{ cookieAuth: [] }]`, matching the `cookieAuth` scheme that's already in `components.securitySchemes`.
+- **OpenAPI request bodies marked everything required.** The renderer pushed every body key into `required` regardless of the field's actual shape. Now respects the body field schema: string-shorthand (`"title": "string"`) stays required-by-default; object form (`"cover_image": {"type": "string", "required": false}`) honors the flag. `prompts/inventory/endpoints.md` and SKILL.md document the two shapes.
+- **`bin/backend-design.mjs --scope <path>` was documented but unimplemented.** The "too many source files" warning suggested passing `--scope <path>` to scope down; argv parsing only ever read `process.argv[2]`. Replaced the hint with the actual workflow ("scope down to a subdirectory before running and re-invoke from there").
+- **`reset` left `schema.mmd` behind.** The s2ai-schema stack writes `./schema.mmd` at repo root, but `reset` only cleaned the four common artifacts. Now deletes `schema.mmd` too — symmetric with `openapi.json`.
+- **`gaps` command help text described one of three side effects.** Help said "Detect missing env vars, unwired buttons, missing auth UI" but the command also re-renders `backend-design.env.example` and `openapi.json`. Help line now matches reality: "Re-detect gaps and refresh next-steps.md, env.example, and openapi.json". README command table updated to match.
+- **`linkSkillAt` would `unlinkSync` a real directory.** If `~/.claude/skills/backend-design` existed as a manually-cloned directory or a symlink to another skill, the installer would attempt to remove it without checking. Now `lstat`s the target and refuses with a clear error when it isn't a symlink.
+
+### Added
+- **`scripts/state.mjs` — shared state helpers.** Single source of truth for `STATE_FILES` (the canonical 8-file list), `loadJson`, `loadState`, and `atomicWriteFileSync`. Replaces five copies of the same loader logic spread across `validate.mjs`, `detect-gaps.mjs`, `render-design.mjs`, `render-env-example.mjs`, `render-openapi.mjs`, and `render-s2ai-schema.mjs`. Adding a new state file now means editing one constant, not auditing six files for drift.
+- **Atomic writes everywhere.** Every renderer (`render-design.mjs`, `render-env-example.mjs`, `render-openapi.mjs`, `render-s2ai-schema.mjs`), `detect-gaps.mjs`, and `bin/backend-design.mjs` (when writing `config.json`) now go through `atomicWriteFileSync` — write to `<path>.tmp`, then `renameSync` over the final path. An interrupted writer can't leave a corrupted file at the user-visible path anymore.
+- **Validator backstops for misclassified user-collection buttons (waves 3 + 4).** Two new warnings catch the recipenest failure modes: `local_state`-classified save/favorite/like buttons surface when no auth entity was emitted (inventory misclassification); `api_call`-classified buttons targeting non-public-form paths surface when signal 7 didn't fire (synthesis-agent override). Public-form targets (`/api/contact`, `/api/newsletter`, etc.) correctly do not trip the warning.
+- **`prompts/inventory/forms.md` — intent-over-wiring classifier rule.** A button is `action: "api_call"` whenever its purpose is a server-side mutation, even when the current implementation is `useState`, `alert()`, or a stub. Labels that always count regardless of wiring: `Reserve`, `Book`, `Buy`, `Checkout`, `Pay`, `Submit`, `Send`, `Save`, `Saved`, `Favorite`/`Favourite`, `Like`, `Bookmark`, `Heart`, `Star`, `Pin`, `Follow`, `Subscribe`, `Add to cart`, `Add to list`, `Add to collection`.
+- **SKILL.md signal 7 — trust-the-inventory rule.** The synthesis agent is forbidden from re-examining the button's current wiring or reclassifying `api_call` to `local_state` based on absence of `fetch()`. The inventory is authoritative on `action`; signal 7's whole purpose is to commit to a placeholder-users schema posture when intent is present but wiring isn't.
+
+### Changed
+- **Env-file detection expanded.** `detect-gaps.mjs` now reads `.env`, `.env.local`, `.env.development`, `.env.development.local`, `.env.production`, and `.env.production.local` (was just `.env` + `.env.local`). The key regex accepts lowercase and `export FOO=bar` shell syntax, and uppercases the captured name before insertion so a lowercase `database_url=…` line satisfies the downstream `env.has("DATABASE_URL")` check.
+- **`package.json` adds an `author` field.** Was previously missing on the v0.15.1 publish.
+
+### Tests
+- 18 new tests across 3 files: `tests/state.test.mjs` (8 — `loadJson`, `loadState` subset/full, `atomicWriteFileSync`, `STATE_FILES` shape), `tests/render-openapi.test.mjs` (6 — session security, JWT back-compat, optional-vs-required body fields, multipart `required: false`), `tests/detect-gaps.test.mjs` (4 — `.env.development` satisfies the blocker, lowercase keys, `export` prefix, empty-env negative case). Plus 4 in `tests/validate.test.mjs` for the misclassified-button backstops. Suite is now 47 tests, all passing.
+
 ## [0.15.1] — 2026-06-05
 
 Tightens the v0.15.0 signal-7 work so the rest of the system actually agrees with it. Adversarial review surfaced four cracks: the rendered design claimed a backend was scaffolded when none was, no validator backstop existed for the signal-7 contract, `auth.signup` was unspecified (risking a spurious `missing_auth_ui` blocker), and the codegen prompts ambiguously instructed on the placeholder `User` entity.
@@ -44,32 +70,6 @@ Second wave tightens the periphery around the same signal-7 work: an open-string
 
 ### Tests
 - 5 new tests: enum violation (`tests/validate.test.mjs`), `judgment:user_owned_mutations` accepted by the enum, `is_webhook` + `inferred_from_signal` mutual exclusion, parameterized forbidden-endpoint variants (`/auth/register`, `/auth/sign-up`, `/auth/signin`, `/v1/auth/login`, `/api/v2/auth/sign-out`), and the flag-order regression pin (`tests/render-design.test.mjs`).
-
----
-
-Third wave closes a signal-7 recall gap the dogfood audit caught: the inventory classified semantically-identical buttons inconsistently (Reserve as `api_call`, Save as `local_state`) based on wiring, so a recipe site with a useState-toggle heart never reached signal 7's check. The skill produced a coherent design — just for the wrong scenario.
-
-### Changed
-- **`prompts/inventory/forms.md` — intent-over-wiring classifier rule.** A button is `action: "api_call"` whenever its *purpose* is a server-side mutation, even when the current implementation is `useState`, `alert()`, or a stub. Specifically enumerates labels that always count regardless of wiring: `Reserve`, `Book`, `Buy`, `Checkout`, `Pay`, `Submit`, `Send`, `Save`, `Saved`, `Favorite`/`Favourite`, `Like`, `Bookmark`, `Heart`, `Star`, `Pin`, `Follow`, `Subscribe`, `Add to cart`, `Add to list`, `Add to collection`. The inventory's job is to capture what the button is *for*, not what it currently *does* — vibe-coded sites have routinely-incomplete wiring.
-
-### Added
-- **Validator backstop warning for misclassified user-collection buttons.** When a project has no auth surface and no auth entity, any `standalone_buttons[]` entry with `action: "local_state"` and a label matching `save|saved|favorite|favourite|like|bookmark|heart|star|pin|follow|wishlist` now surfaces a warning explaining that signal 7 only sees `api_call` actions and recommending the inventory be re-run or the action reclassified. Catches the case where the inventory classifier rule above wasn't followed.
-
-### Tests
-- 2 new tests in `tests/validate.test.mjs`: the misclassified case surfaces the warning, the correctly-classified `api_call` case does NOT.
-
----
-
-Fourth wave closes the *second* signal-7 recall gap surfaced by re-running the dogfood on recipenest after the third-wave fix: the inventory correctly classified Save as `api_call` (third wave worked), but the **synthesis agent then re-examined the wiring**, saw `useState` only, and overrode the classification — writing in `auth.json.note` that "the save-button api_call targets are reclassified stubs... signal 7 did not fire." The agent did its own version of signal 7's job (asked the question via an Open Question, recommended localStorage) but skipped signal 7's schema-ready default.
-
-### Changed
-- **SKILL.md signal 7 — explicit trust-the-inventory rule.** The synthesis agent is now forbidden from re-examining the button's current wiring or reclassifying `api_call` to `local_state` based on absence of `fetch()`. The inventory is authoritative on `action`; signal 7's whole purpose is to commit to a placeholder-users schema posture when intent is present but wiring isn't. If the synthesis agent genuinely believes ephemeral local state is the intent, it must surface that as an Open Question *in addition to* firing signal 7, not as a replacement.
-
-### Added
-- **Validator backstop extended to catch synthesis overrides.** The existing backstop only caught `local_state` misclassifications (inventory-layer mistakes). Now also fires when a `standalone_buttons[]` entry with `action: "api_call"` and a user-collection label exists, AND the target isn't a public-form pattern, AND no auth entity was emitted, AND `auth.inferred_from` is unset. That combination strongly suggests the synthesis agent suppressed signal 7 against the SKILL.md rule. Warning explains the likely cause and points at the SKILL.md trust-the-inventory clause.
-
-### Tests
-- 2 new tests in `tests/validate.test.mjs`: the synthesis-override case surfaces the new warning; public-form targets do NOT trigger it (correct suppression). Updated the existing "correctly classified" test to reflect signal 7 actually having fired (User entity + nullable `user_id` FK) so it represents the true happy path.
 
 ## [0.15.0] — 2026-06-05
 
@@ -237,7 +237,8 @@ Bundles a connected sprint of work that landed together: cookie sessions + CSRF,
 ### Added
 - Initial release. SKILL.md runbook, JSON state schema, validator, model pinning, CLI installer.
 
-[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.15.1...HEAD
+[Unreleased]: https://github.com/jwolfsohn/backend-design/compare/v0.15.2...HEAD
+[0.15.2]: https://github.com/jwolfsohn/backend-design/compare/v0.15.1...v0.15.2
 [0.15.1]: https://github.com/jwolfsohn/backend-design/compare/v0.15.0...v0.15.1
 [0.11.0]: https://github.com/jwolfsohn/backend-design/compare/v0.7.0...v0.11.0
 [0.7.0]: https://github.com/jwolfsohn/backend-design/compare/v0.6.0...v0.7.0
