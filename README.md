@@ -126,7 +126,7 @@ Owning the boundaries so you don't waste time finding out later.
 |---------|--------------|
 | `npx backend-design start` | Interactive: pick stack + auth + vibe-coder mode, write `.backend-design/config.json`. **Auto-registers the skill on first run.** |
 | `npx backend-design validate` | Validate `.backend-design/state/*.json` against invariants |
-| `npx backend-design gaps` | Re-detect missing env vars, unwired buttons, missing auth UI; rewrite `backend-design-next-steps.md` |
+| `npx backend-design gaps` | Re-detect gaps and refresh `backend-design-next-steps.md`, `backend-design.env.example`, and `openapi.json` |
 | `npx backend-design status` | Show phase progress, frontend signature, and open gap counts |
 | `npx backend-design reset` | Delete `.backend-design/` and the generated docs to start fresh (asks for confirmation) |
 | `npx backend-design install` | Symlink the skill **globally** into `~/.claude/skills/`. Only needed if you want it available across every project — `start` auto-installs project-local at `./.claude/skills/backend-design` on first run. |

@@ -45,6 +45,32 @@ Second wave tightens the periphery around the same signal-7 work: an open-string
 ### Tests
 - 5 new tests: enum violation (`tests/validate.test.mjs`), `judgment:user_owned_mutations` accepted by the enum, `is_webhook` + `inferred_from_signal` mutual exclusion, parameterized forbidden-endpoint variants (`/auth/register`, `/auth/sign-up`, `/auth/signin`, `/v1/auth/login`, `/api/v2/auth/sign-out`), and the flag-order regression pin (`tests/render-design.test.mjs`).
 
+---
+
+Third wave closes a signal-7 recall gap the dogfood audit caught: the inventory classified semantically-identical buttons inconsistently (Reserve as `api_call`, Save as `local_state`) based on wiring, so a recipe site with a useState-toggle heart never reached signal 7's check. The skill produced a coherent design — just for the wrong scenario.
+
+### Changed
+- **`prompts/inventory/forms.md` — intent-over-wiring classifier rule.** A button is `action: "api_call"` whenever its *purpose* is a server-side mutation, even when the current implementation is `useState`, `alert()`, or a stub. Specifically enumerates labels that always count regardless of wiring: `Reserve`, `Book`, `Buy`, `Checkout`, `Pay`, `Submit`, `Send`, `Save`, `Saved`, `Favorite`/`Favourite`, `Like`, `Bookmark`, `Heart`, `Star`, `Pin`, `Follow`, `Subscribe`, `Add to cart`, `Add to list`, `Add to collection`. The inventory's job is to capture what the button is *for*, not what it currently *does* — vibe-coded sites have routinely-incomplete wiring.
+
+### Added
+- **Validator backstop warning for misclassified user-collection buttons.** When a project has no auth surface and no auth entity, any `standalone_buttons[]` entry with `action: "local_state"` and a label matching `save|saved|favorite|favourite|like|bookmark|heart|star|pin|follow|wishlist` now surfaces a warning explaining that signal 7 only sees `api_call` actions and recommending the inventory be re-run or the action reclassified. Catches the case where the inventory classifier rule above wasn't followed.
+
+### Tests
+- 2 new tests in `tests/validate.test.mjs`: the misclassified case surfaces the warning, the correctly-classified `api_call` case does NOT.
+
+---
+
+Fourth wave closes the *second* signal-7 recall gap surfaced by re-running the dogfood on recipenest after the third-wave fix: the inventory correctly classified Save as `api_call` (third wave worked), but the **synthesis agent then re-examined the wiring**, saw `useState` only, and overrode the classification — writing in `auth.json.note` that "the save-button api_call targets are reclassified stubs... signal 7 did not fire." The agent did its own version of signal 7's job (asked the question via an Open Question, recommended localStorage) but skipped signal 7's schema-ready default.
+
+### Changed
+- **SKILL.md signal 7 — explicit trust-the-inventory rule.** The synthesis agent is now forbidden from re-examining the button's current wiring or reclassifying `api_call` to `local_state` based on absence of `fetch()`. The inventory is authoritative on `action`; signal 7's whole purpose is to commit to a placeholder-users schema posture when intent is present but wiring isn't. If the synthesis agent genuinely believes ephemeral local state is the intent, it must surface that as an Open Question *in addition to* firing signal 7, not as a replacement.
+
+### Added
+- **Validator backstop extended to catch synthesis overrides.** The existing backstop only caught `local_state` misclassifications (inventory-layer mistakes). Now also fires when a `standalone_buttons[]` entry with `action: "api_call"` and a user-collection label exists, AND the target isn't a public-form pattern, AND no auth entity was emitted, AND `auth.inferred_from` is unset. That combination strongly suggests the synthesis agent suppressed signal 7 against the SKILL.md rule. Warning explains the likely cause and points at the SKILL.md trust-the-inventory clause.
+
+### Tests
+- 2 new tests in `tests/validate.test.mjs`: the synthesis-override case surfaces the new warning; public-form targets do NOT trigger it (correct suppression). Updated the existing "correctly classified" test to reflect signal 7 actually having fired (User entity + nullable `user_id` FK) so it represents the true happy path.
+
 ## [0.15.0] — 2026-06-05
 
 Closes two design holes the QA tester surfaced: the auth-signal list missed user-owned-mutations-without-auth-UI, and auth endpoints emitted from non-UI signals had to fake a `triggered_by` to satisfy the validator.

@@ -5,10 +5,11 @@
 // Writes `.backend-design/gaps.json` and `./backend-design-next-steps.md`.
 // Idempotent. Safe to re-run; closure detection diffs against the previous `gaps.json`.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync, existsSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { isMainModule } from "./is-main.mjs";
+import { loadJson, atomicWriteFileSync } from "./state.mjs";
 
 const SKILL_DIR = dirname(dirname(fileURLToPath(import.meta.url)));
 const TEMPLATES_PATH = join(SKILL_DIR, "prompts", "next-steps-templates.md");
@@ -53,28 +54,32 @@ function loadState(stateDir) {
   return state;
 }
 
-function loadJson(path) {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
+// Files considered "real" sources of env values. Mirrors Next.js's load order
+// loosely — .env.example is excluded because it's a template, not a source.
+const ENV_FILES = [
+  ".env",
+  ".env.local",
+  ".env.development",
+  ".env.development.local",
+  ".env.production",
+  ".env.production.local",
+];
 
 function loadEnvVars(cwd) {
-  // Only consult actual env files, not .env.example (which is a template, not a source of values).
   const env = new Set();
-  for (const f of [".env", ".env.local"]) {
+  for (const f of ENV_FILES) {
     const p = join(cwd, f);
     if (!existsSync(p)) continue;
     const raw = readFileSync(p, "utf8");
     for (const line of raw.split("\n")) {
       if (line.trim().startsWith("#")) continue;
-      const m = line.match(/^\s*([A-Z][A-Z0-9_]+)\s*=\s*(.*)$/);
+      // Accept lowercase keys and `export FOO=bar` shell syntax; uppercase the
+      // captured name before insertion so downstream `env.has("DATABASE_URL")`
+      // checks hit even when the file contains `database_url=…`.
+      const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
       if (!m) continue;
       const value = m[2].trim().replace(/^["']|["']$/g, "");
-      if (value) env.add(m[1]);
+      if (value) env.add(m[1].toUpperCase());
     }
   }
   return env;
@@ -529,8 +534,8 @@ export function runDetect(cwd = process.cwd()) {
     throw new Error(`${baseDir} not found. Run \`npx backend-design start\` then Phase 1 first.`);
   }
   const gaps = detectGaps(cwd);
-  writeFileSync(join(baseDir, "gaps.json"), JSON.stringify(gaps, null, 2) + "\n");
-  writeFileSync(join(cwd, "backend-design-next-steps.md"), renderNextSteps(gaps) + "\n");
+  atomicWriteFileSync(join(baseDir, "gaps.json"), JSON.stringify(gaps, null, 2) + "\n");
+  atomicWriteFileSync(join(cwd, "backend-design-next-steps.md"), renderNextSteps(gaps) + "\n");
   return gaps;
 }
 

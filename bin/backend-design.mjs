@@ -414,7 +414,17 @@ function linkSkillAt(target, { displayPath } = {}) {
   }
   mkdirSync(dirname(target), { recursive: true });
   const existed = pathExists(target);
-  if (existed) unlinkSync(target);
+  if (existed) {
+    // Refuse to unlink a real directory or regular file — that would silently
+    // destroy whatever's there (e.g. a hand-cloned skill or another tool's data).
+    const st = lstatSync(target);
+    if (!st.isSymbolicLink()) {
+      fail(`refusing to overwrite non-symlink at ${target} — remove it manually first`);
+      blank();
+      process.exit(1);
+    }
+    unlinkSync(target);
+  }
   symlinkSync(pkgRoot, target, "dir");
   const shown = displayPath ?? target;
   if (existed) dim(`replaced existing symlink: ${shown}`);
@@ -499,7 +509,7 @@ async function start() {
     warn("could not count source files");
   } else if (fileCount > 1500) {
     fail(`${fileCount} source files — too large to analyze cleanly`);
-    dim("scope down to a subdirectory before running, or pass --scope <path>");
+    dim("scope down to a subdirectory before running and re-invoke from there");
     blank();
     process.exit(1);
   } else if (fileCount > 500) {
@@ -673,6 +683,7 @@ async function reset() {
   const nextStepsPath = join(cwd, "backend-design-next-steps.md");
   const envExamplePath = join(cwd, "backend-design.env.example");
   const openapiPath = join(cwd, "openapi.json");
+  const schemaMmdPath = join(cwd, "schema.mmd");
 
   const targets = [];
   if (existsSync(stateDir)) targets.push({ label: ".backend-design/", path: stateDir, dir: true });
@@ -680,6 +691,7 @@ async function reset() {
   if (existsSync(nextStepsPath)) targets.push({ label: "backend-design-next-steps.md", path: nextStepsPath, dir: false });
   if (existsSync(envExamplePath)) targets.push({ label: "backend-design.env.example", path: envExamplePath, dir: false });
   if (existsSync(openapiPath)) targets.push({ label: "openapi.json", path: openapiPath, dir: false });
+  if (existsSync(schemaMmdPath)) targets.push({ label: "schema.mmd", path: schemaMmdPath, dir: false });
 
   if (!targets.length) {
     dim("nothing to reset (no .backend-design/ or generated docs in this directory)");
@@ -779,7 +791,7 @@ function help() {
     ["uninstall", "Remove the global and/or project-local symlink"],
     ["start", "Pick a stack and write .backend-design/config.json"],
     ["validate", "Check .backend-design/state/*.json invariants"],
-    ["gaps", "Detect missing env vars, unwired buttons, missing auth UI"],
+    ["gaps", "Re-detect gaps and refresh next-steps.md, env.example, and openapi.json"],
     ["status", "Show phase progress, frontend signature, and open gaps"],
     ["reset", "Delete .backend-design/ and generated docs to start fresh"],
   ];
