@@ -3,12 +3,14 @@
 // Targets the s2ai Mermaid-based schema format. @dictionary blocks, @service auth, and regex
 // patterns are intentionally left as TODO comments for the user to fill in by hand.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
+import { readFileSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { isMainModule } from "./is-main.mjs";
+import { loadState, atomicWriteFileSync } from "./state.mjs";
 
-const STATE_FILES = ["entities.json", "relationships.json", "endpoints.json", "auth.json"];
+// Subset the s2ai renderer actually inspects; loadState skips the rest.
+const S2AI_STATE_FILES = ["entities.json", "relationships.json", "endpoints.json", "auth.json"];
 
 const TYPE_MAP = {
   uuid: "String",
@@ -36,21 +38,6 @@ const TYPE_MAP = {
   money: "Currency",
   currency: "Currency",
 };
-
-function loadState(cwd) {
-  const dir = join(cwd, ".backend-design", "state");
-  const out = {};
-  for (const f of STATE_FILES) {
-    const p = join(dir, f);
-    if (!existsSync(p)) continue;
-    try {
-      out[f.replace(".json", "")] = JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      // Validator surfaces parse errors elsewhere; render with whatever we have.
-    }
-  }
-  return out;
-}
 
 function loadVersion() {
   try {
@@ -188,7 +175,7 @@ function byName(a, b) {
 }
 
 export function renderSchema(cwd = process.cwd()) {
-  const state = loadState(cwd);
+  const state = loadState(cwd, S2AI_STATE_FILES);
   const version = loadVersion();
   const entities = state.entities ?? [];
   const relationships = state.relationships ?? [];
@@ -259,7 +246,7 @@ export function renderSchema(cwd = process.cwd()) {
 
 export function runRender(cwd = process.cwd()) {
   const out = renderSchema(cwd);
-  writeFileSync(join(cwd, "schema.mmd"), out.endsWith("\n") ? out : out + "\n");
+  atomicWriteFileSync(join(cwd, "schema.mmd"), out.endsWith("\n") ? out : out + "\n");
   return out;
 }
 

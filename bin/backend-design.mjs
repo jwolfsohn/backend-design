@@ -1,11 +1,12 @@
 #!/usr/bin/env node
-import { mkdirSync, symlinkSync, unlinkSync, lstatSync, existsSync, readFileSync, writeFileSync, readdirSync, rmSync } from "fs";
+import { mkdirSync, symlinkSync, unlinkSync, lstatSync, existsSync, readFileSync, readdirSync, rmSync } from "fs";
 import { join, dirname, resolve } from "path";
 import { fileURLToPath } from "url";
 import { homedir } from "os";
 import { execSync } from "child_process";
 import prompts from "prompts";
 import pc from "picocolors";
+import { atomicWriteFileSync } from "../scripts/state.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const pkgRoot = resolve(__dirname, "..");
@@ -641,7 +642,7 @@ async function start() {
   const stateDir = join(cwd, ".backend-design");
   mkdirSync(stateDir, { recursive: true });
   const configPath = join(stateDir, "config.json");
-  writeFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
+  atomicWriteFileSync(configPath, JSON.stringify(config, null, 2) + "\n");
   ok(`wrote ${pc.dim(".backend-design/config.json")}`);
   blank();
 

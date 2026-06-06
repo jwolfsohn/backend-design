@@ -2,20 +2,9 @@
 // render-design.mjs — deterministically render ./backend-design.md from .backend-design/state/*.json.
 // Mirrors the 8-section structure documented in SKILL.md so reviewers get a stable diff between runs.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isMainModule } from "./is-main.mjs";
-
-const STATE_FILES = [
-  "screens.json",
-  "components.json",
-  "endpoints.json",
-  "forms.json",
-  "entities.json",
-  "relationships.json",
-  "auth.json",
-  "open_questions.json",
-];
+import { loadJson, loadState, atomicWriteFileSync } from "./state.mjs";
 
 export function summarizeDesign(cwd = process.cwd()) {
   const state = loadState(cwd);
@@ -87,30 +76,6 @@ export function renderDesign(cwd = process.cwd()) {
   lines.push(...openQuestions(state), "");
 
   return lines.join("\n").replace(/\n{3,}/g, "\n\n");
-}
-
-function loadState(cwd) {
-  const dir = join(cwd, ".backend-design", "state");
-  const out = {};
-  for (const f of STATE_FILES) {
-    const p = join(dir, f);
-    if (!existsSync(p)) continue;
-    try {
-      out[f.replace(".json", "")] = JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      // Validator surfaces parse errors elsewhere; render with whatever we have.
-    }
-  }
-  return out;
-}
-
-function loadJson(path) {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
 }
 
 function overview(state, config) {
@@ -427,9 +392,9 @@ function snake(name) {
 
 export function runRender(cwd = process.cwd()) {
   const out = renderDesign(cwd);
-  writeFileSync(join(cwd, "backend-design.md"), out.endsWith("\n") ? out : out + "\n");
+  atomicWriteFileSync(join(cwd, "backend-design.md"), out.endsWith("\n") ? out : out + "\n");
   const summary = summarizeDesign(cwd);
-  writeFileSync(
+  atomicWriteFileSync(
     join(cwd, ".backend-design", "state", "design-summary.json"),
     JSON.stringify(summary, null, 2) + "\n"
   );

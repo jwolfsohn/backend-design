@@ -7,13 +7,14 @@
 //
 // Idempotent. Safe to re-run after editing the design.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
 import { isMainModule } from "./is-main.mjs";
 import { join } from "path";
+import { loadJson, loadState, atomicWriteFileSync } from "./state.mjs";
 
 const OUTPUT_FILE = "backend-design.env.example";
 
-const STATE_FILES = ["endpoints.json", "forms.json", "auth.json"];
+// Subset the env renderer actually inspects; loadState skips the rest.
+const ENV_STATE_FILES = ["endpoints.json", "forms.json", "auth.json"];
 
 function anyMultipart(state) {
   const eps = state.endpoints ?? [];
@@ -23,7 +24,7 @@ function anyMultipart(state) {
 }
 
 export function renderEnvExample(cwd = process.cwd()) {
-  const state = loadState(cwd);
+  const state = loadState(cwd, ENV_STATE_FILES);
   const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
   const sections = buildSections(state, config);
 
@@ -311,37 +312,13 @@ function oauthHint(name) {
   }
 }
 
-function loadState(cwd) {
-  const dir = join(cwd, ".backend-design", "state");
-  const out = {};
-  for (const f of STATE_FILES) {
-    const p = join(dir, f);
-    if (!existsSync(p)) continue;
-    try {
-      out[f.replace(".json", "")] = JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      // Skip; validator surfaces parse errors.
-    }
-  }
-  return out;
-}
-
-function loadJson(path) {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 export function runRender(cwd = process.cwd()) {
   const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
   if (config?.stack?.id === "s2ai-schema") {
     return null;
   }
   const out = renderEnvExample(cwd);
-  writeFileSync(join(cwd, OUTPUT_FILE), out.endsWith("\n") ? out : out + "\n");
+  atomicWriteFileSync(join(cwd, OUTPUT_FILE), out.endsWith("\n") ? out : out + "\n");
   return out;
 }
 

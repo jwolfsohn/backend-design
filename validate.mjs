@@ -2,17 +2,7 @@
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isMainModule } from "./scripts/is-main.mjs";
-
-const FILES = [
-  "screens.json",
-  "components.json",
-  "endpoints.json",
-  "forms.json",
-  "entities.json",
-  "relationships.json",
-  "auth.json",
-  "open_questions.json",
-];
+import { STATE_FILES } from "./scripts/state.mjs";
 
 const VALID_REL_TYPES = ["one-to-one", "one-to-many", "many-to-one", "many-to-many"];
 
@@ -43,7 +33,7 @@ export function validate(cwd = process.cwd()) {
     return { errors, warnings, state };
   }
 
-  for (const f of FILES) {
+  for (const f of STATE_FILES) {
     const path = join(stateDir, f);
     if (existsSync(path)) {
       try {
