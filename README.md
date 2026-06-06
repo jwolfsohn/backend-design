@@ -29,7 +29,31 @@ Then open Claude Code in the same directory and run:
 
 That's it. The skill auto-registers project-local at `./.claude/skills/backend-design` on first run, picks up your stack and auth choices from `start`, and walks through inventory, design review, and code generation. Want it across every project? Run `backend-design install` for a global install at `~/.claude/skills/`.
 
+<p align="center">
+  <img src="docs/cli.png" alt="npx backend-design start — frontend detection and stack picker" width="720">
+</p>
+
 Release notes: [CHANGELOG.md](CHANGELOG.md).
+
+## What you get
+
+A single `backend-design.md` you review before any code is written. Excerpt:
+
+```markdown
+## Entity map
+- **Post** (`posts`) — one-to-many → Comment via `post_id` (on delete: cascade)
+- **Comment** (`comments`) — belongs-to → User via `author_id`
+- **User** (`users`)
+
+## API endpoints
+| Method | Path                | Auth | Body            | Triggered by        |
+|--------|---------------------|------|-----------------|---------------------|
+| `GET`  | `/api/posts`        | none | —               | src/Feed.tsx:18     |
+| `POST` | `/api/posts`        | jwt  | `title, body`   | src/NewPost.tsx:42  |
+| `POST` | `/api/auth/login`   | none | `email, pw`     | _inferred_ from `auth_required_screen` |
+```
+
+Plus `backend-design-next-steps.md` (blockers + wire-up TODOs), `backend-design.env.example`, and `openapi.json` at repo root.
 
 ## Supported frontends
 
