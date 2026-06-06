@@ -21,6 +21,8 @@ Write a JSON array to `.backend-design/state/endpoints.json` where each element 
 }
 ```
 
+**Body field shape.** Each `request_body` value is either a string type shorthand (`"title": "string"` — required by default) or an object (`"cover_image": {"type": "string", "required": false}`). Only `required: false` opts a field out — absent or `true` both mean required. Use the object form when a form input has `validation.required: false`.
+
 Endpoints may also carry `required_role: string | string[] | null` (default null) and `content_type: "multipart/form-data" | "application/json"` — both are set in Phase 2, not here. Leave them absent in Phase 1.
 
 **List-fetch enrichment.** For every GET that returns an array (i.e. a list endpoint), inspect the consuming screen for pagination, filter, and sort UI and capture them:

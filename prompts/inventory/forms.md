@@ -45,6 +45,16 @@ Write JSON to `.backend-design/state/forms.json` with this shape:
 
 Action values: `api_call`, `navigate`, `local_state`, `open_modal`. Set `destructive: true` for Delete/Remove/Cancel.
 
+**Classify by intent, not by current wiring.** A button is `action: "api_call"` whenever its *purpose* is a server-side mutation, even when the current implementation is `useState`, `alert()`, a `console.log`, or a stub. The frontend's wiring is often incomplete on vibe-coded sites; the inventory's job is to capture what the button is *for*, not what it currently *does*. Specifically:
+
+- **Always `api_call` regardless of wiring** — buttons whose label, text, or `aria-label` matches any of: `Reserve`, `Book`, `Buy`, `Checkout`, `Pay`, `Submit`, `Send`, `Subscribe`, `Save`, `Saved`, `Favorite` / `Favourite`, `Like`, `Bookmark`, `Heart`, `Star`, `Pin`, `Follow`, `Subscribe`, `Add to cart`, `Add to list`, `Add to collection`. These labels carry **persistent-collection or transactional semantics** — a heart icon on a recipe card is morally an API call even when the only handler is `setFavorited(f => !f)`. Set `target` to a best-guess endpoint (e.g. `POST /api/recipes/:id/favorite`) so signal 7 and the synthesis agent can reason about ownership.
+
+- **`local_state`** is for genuinely local UI affordances: show/hide details, dropdown open/close, tab switching, accordion expand/collapse, image gallery cycling, modal dismiss-without-save. If you find yourself defaulting to `local_state` for a save/favorite/like-shaped button just because there's no `fetch()` call, **stop and reclassify** — the wiring is incomplete, not the intent.
+
+- **`navigate`** is for `<Link>` / `<a href>` / `router.push()` actions that change the URL without mutating state.
+
+- **`open_modal`** is for buttons that open a dialog containing a *separate* form/button — classify the inner action separately.
+
 **File inputs.** For every `<input type="file">` (or `accept` attr, or framework equivalent), set `type: "file"` and capture `accept` (MIME globs) and any size validation. If the form contains any file input, set `multipart: true` at the form level — the endpoint will need to accept `multipart/form-data`. If the form uses `FormData` in JS without an `<input type="file">`, still set `multipart: true` and note the field names.
 
 Do not output markdown — only the JSON file.

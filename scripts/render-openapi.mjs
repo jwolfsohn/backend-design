@@ -6,12 +6,13 @@
 // copy this file into the scaffolded backend so the Swagger UI at /docs serves the same
 // design-time contract that backend-design.md describes.
 
-import { readFileSync, writeFileSync, existsSync } from "fs";
 import { join } from "path";
 import { isMainModule } from "./is-main.mjs";
+import { loadJson, loadState, atomicWriteFileSync } from "./state.mjs";
 
 const OUTPUT_FILE = "openapi.json";
-const STATE_FILES = ["endpoints.json", "entities.json", "auth.json"];
+// Subset the OpenAPI renderer actually inspects; loadState skips the rest.
+const OPENAPI_STATE_FILES = ["endpoints.json", "entities.json", "auth.json"];
 
 // Maps entities.json type names to OpenAPI 3.1 schema fragments. Unknown types fall through
 // to { type: "string" } so spec generation never crashes on a hand-edited entity.
@@ -39,7 +40,7 @@ const TYPE_MAP = {
 };
 
 export function renderOpenApi(cwd = process.cwd()) {
-  const state = loadState(cwd);
+  const state = loadState(cwd, OPENAPI_STATE_FILES);
   const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
   const userPkg = loadJson(join(cwd, "package.json")) ?? {};
 
@@ -110,8 +111,9 @@ function buildOperation(ep, state) {
 
   op.responses = buildResponses(ep, state);
 
-  if (ep.auth === "required" && state.auth?.strategy === "jwt") {
-    op.security = [{ bearerAuth: [] }];
+  if (ep.auth === "required") {
+    if (state.auth?.strategy === "jwt") op.security = [{ bearerAuth: [] }];
+    else if (state.auth?.strategy === "session") op.security = [{ cookieAuth: [] }];
   }
   if (ep.required_role) {
     op["x-required-role"] = Array.isArray(ep.required_role) ? ep.required_role : [ep.required_role];
@@ -185,6 +187,14 @@ function buildParameters(ep) {
   return params;
 }
 
+// Body field shape: either a string type ("title": "string") or an object
+// ("cover_image": { type: "string", required: false }). Only `required: false`
+// opts out — absent or `true` both mean required, so string-shorthand bodies
+// stay required-by-default.
+function isRequired(def) {
+  return !(def && typeof def === "object" && def.required === false);
+}
+
 function buildRequestBody(ep) {
   const body = ep.request_body;
   if (!body || typeof body !== "object" || !Object.keys(body).length) return null;
@@ -196,15 +206,15 @@ function buildRequestBody(ep) {
       if (def && typeof def === "object" && def.accept !== undefined) {
         properties[name] = { type: "string", format: "binary" };
       } else {
-        properties[name] = mapType(typeof def === "string" ? def : "string");
+        properties[name] = mapType(typeof def === "object" ? def.type ?? "string" : def);
       }
-      required.push(name);
+      if (isRequired(def)) required.push(name);
     }
     return {
       required: true,
       content: {
         "multipart/form-data": {
-          schema: { type: "object", properties, required },
+          schema: { type: "object", properties, ...(required.length ? { required } : {}) },
         },
       },
     };
@@ -213,14 +223,14 @@ function buildRequestBody(ep) {
   const properties = {};
   const required = [];
   for (const [name, def] of Object.entries(body)) {
-    properties[name] = mapType(typeof def === "string" ? def : "string");
-    required.push(name);
+    properties[name] = mapType(typeof def === "object" ? def.type ?? "string" : def);
+    if (isRequired(def)) required.push(name);
   }
   return {
     required: true,
     content: {
       "application/json": {
-        schema: { type: "object", properties, required },
+        schema: { type: "object", properties, ...(required.length ? { required } : {}) },
       },
     },
   };
@@ -452,30 +462,6 @@ function nullableType(t) {
   return [t, "null"];
 }
 
-function loadState(cwd) {
-  const dir = join(cwd, ".backend-design", "state");
-  const out = {};
-  for (const f of STATE_FILES) {
-    const p = join(dir, f);
-    if (!existsSync(p)) continue;
-    try {
-      out[f.replace(".json", "")] = JSON.parse(readFileSync(p, "utf8"));
-    } catch {
-      // Validator surfaces parse errors elsewhere.
-    }
-  }
-  return out;
-}
-
-function loadJson(path) {
-  if (!existsSync(path)) return null;
-  try {
-    return JSON.parse(readFileSync(path, "utf8"));
-  } catch {
-    return null;
-  }
-}
-
 export function summarizeSpec(spec) {
   const paths = Object.keys(spec.paths ?? {}).length;
   const operations = Object.values(spec.paths ?? {}).reduce(
@@ -491,7 +477,7 @@ export function runRender(cwd = process.cwd()) {
   const config = loadJson(join(cwd, ".backend-design", "config.json")) ?? {};
   if (config?.stack?.id === "s2ai-schema") return null;
   const spec = renderOpenApi(cwd);
-  writeFileSync(join(cwd, OUTPUT_FILE), JSON.stringify(spec, null, 2) + "\n");
+  atomicWriteFileSync(join(cwd, OUTPUT_FILE), JSON.stringify(spec, null, 2) + "\n");
   return spec;
 }
 

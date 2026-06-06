@@ -250,6 +250,32 @@ export function validate(cwd = process.cwd()) {
     }
   }
 
+  // Backstops for signal 7 not firing when it should have. Two failure modes:
+  //   (A) Inventory misclassifies a user-collection button as local_state (so signal 7 never sees it).
+  //   (B) Inventory correctly classifies as api_call BUT the synthesis agent overrides the
+  //       classification by re-examining wiring (sees useState, decides "not really a mutation").
+  // SKILL.md's signal-7 paragraph now explicitly forbids (B), but the validator surfaces both as
+  // warnings — the upstream fix lives in prompts/inventory/forms.md (for A) and SKILL.md (for B).
+  const hasAuthSurfaceUi = authSurface?.signup?.present || authSurface?.login?.present;
+  if (!isPhase1Only && standaloneButtons.length && !hasAuthSurfaceUi && !authEntityName) {
+    const COLLECTION_LABEL_RE = /\b(save|saved|favorite|favorites|favourite|favourites|like|likes|bookmark|bookmarks|heart|star|pin|follow|wishlist)\b/i;
+    const PUBLIC_FORM_TARGET_RE = /\/(api\/)?(contact|contact-us|contactus|get-in-touch|newsletter|subscribe|subscription|waitlist|wait-list|feedback|support|support-ticket|help|leads?|demo|demo-request)\b/i;
+    for (const btn of standaloneButtons) {
+      const label = btn.label ?? "";
+      if (!COLLECTION_LABEL_RE.test(label)) continue;
+      if (btn.action === "local_state") {
+        // (A) misclassified at the inventory layer
+        warnings.push(`Standalone button "${label}" at ${btn.file ?? "?"} is action:"local_state" but its label suggests user-collection intent. Signal 7 only sees action:"api_call" buttons — this may be why no placeholder users entity was emitted. If the user-owned intent is real, the inventory should classify this as action:"api_call" (see prompts/inventory/forms.md intent-over-wiring rule).`);
+      } else if (btn.action === "api_call") {
+        // (B) inventory got it right, but synthesis suppressed signal 7. Skip when the target
+        // is a public-form pattern (signal 7 is correctly suppressed in that case).
+        const target = btn.target ?? "";
+        if (PUBLIC_FORM_TARGET_RE.test(target)) continue;
+        warnings.push(`Standalone button "${label}" at ${btn.file ?? "?"} is action:"api_call" with target "${target || "(unset)"}" — looks like a user-owned mutation, but no auth entity was emitted and auth.inferred_from is unset. Signal 7 likely should have fired (placeholder users entity + nullable user_id FKs). The synthesis agent may have overridden the inventory's classification by re-examining the wiring; SKILL.md signal 7 explicitly forbids that. Re-run synthesis or accept the design as-is if local-state truly is the intent.`);
+      }
+    }
+  }
+
   // Entities exempt from "is this displayed on a screen" and "best-practice columns" warnings.
   // Session rows are server-managed: they have no UI surface and aren't user-authored.
   const exemptEntities = new Set([authEntityName, "Session"].filter(Boolean));

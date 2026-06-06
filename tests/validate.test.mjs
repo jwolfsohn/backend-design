@@ -378,6 +378,176 @@ test("validate: auth.strategy:'none' paired with auth.signup:true errors (global
   }
 });
 
+test("validate: save-shaped standalone button classified as local_state surfaces the inventory-misclassification warning when no auth entity exists", () => {
+  // Mirrors the recipenest failure case from the v0.15.1 dogfood audit: a heart/save button is
+  // marked as local_state because it has no fetch, so signal 7 never fires. The warning surfaces
+  // this likely-misclassification so the user knows to re-run inventory or fix prompts/inventory/forms.md.
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "recipes", file: "src/Recipes.tsx", evidence: ["src/Recipes.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "RecipeCard" }] },
+    "forms.json": {
+      forms: [],
+      standalone_buttons: [
+        { file: "src/RecipeCard.tsx:42", label: "Save recipe", action: "local_state" },
+      ],
+      auth_surface: { signup: { present: false }, login: { present: false } },
+    },
+    "entities.json": [
+      {
+        name: "Recipe",
+        table: "recipes",
+        fields: [{ name: "id", type: "uuid", pk: true }],
+        evidence: ["src/Recipes.tsx:1"],
+      },
+    ],
+    "endpoints.json": [
+      { method: "POST", path: "/api/contact", auth: "none", triggered_by: ["src/Recipes.tsx:1"] },
+    ],
+    "auth.json": { strategy: "none" },
+  });
+  try {
+    const { warnings } = validate(root);
+    const w = warnings.find(
+      (msg) => msg.includes("Save recipe") && msg.includes("user-collection intent")
+    );
+    assert.ok(w, `expected the misclassification warning, got warnings: ${warnings.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
+test("validate: save-shaped api_call button when signal 7 didn't fire surfaces the synthesis-override warning", () => {
+  // Mirrors the recipenest re-run case: inventory correctly classifies Save as api_call, but the
+  // synthesis agent re-examines the wiring (sees useState only), overrides the classification, and
+  // skips signal 7. The validator catches the resulting inconsistency: api_call user-collection
+  // button + no auth entity + no inferred_from = signal 7 was suppressed when it shouldn't have been.
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "recipes", file: "src/Recipes.tsx", evidence: ["src/Recipes.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "RecipeCard" }] },
+    "forms.json": {
+      forms: [],
+      standalone_buttons: [
+        { file: "src/SaveButton.tsx:11", label: "Save recipe", action: "api_call", target: "POST /api/recipes/:id/save" },
+      ],
+      auth_surface: { signup: { present: false }, login: { present: false } },
+    },
+    "entities.json": [
+      {
+        name: "Recipe",
+        table: "recipes",
+        fields: [{ name: "id", type: "uuid", pk: true }],
+        evidence: ["src/Recipes.tsx:1"],
+      },
+    ],
+    "endpoints.json": [
+      { method: "POST", path: "/api/contact", auth: "none", triggered_by: ["src/Recipes.tsx:1"] },
+    ],
+    "auth.json": { strategy: "none" },
+  });
+  try {
+    const { warnings } = validate(root);
+    const w = warnings.find(
+      (msg) => msg.includes("Save recipe") && msg.includes("overridden the inventory")
+    );
+    assert.ok(w, `expected synthesis-override warning, got: ${warnings.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
+test("validate: api_call button targeting a public-form path does NOT surface the synthesis-override warning", () => {
+  // Public-form suppression is correct behavior — the backstop must not fire on contact/newsletter
+  // forms even though their labels could in theory match the collection regex (e.g. "Save email").
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "home", file: "src/Home.tsx", evidence: ["src/Home.tsx:1"] },
+    ],
+    "components.json": { components: [{ name: "Footer" }] },
+    "forms.json": {
+      forms: [],
+      standalone_buttons: [
+        { file: "src/Footer.tsx:5", label: "Save my email", action: "api_call", target: "POST /api/newsletter" },
+      ],
+      auth_surface: { signup: { present: false }, login: { present: false } },
+    },
+    "entities.json": [
+      {
+        name: "NewsletterSubscriber",
+        table: "newsletter_subscribers",
+        fields: [{ name: "id", type: "uuid", pk: true }],
+        evidence: ["src/Footer.tsx:5"],
+      },
+    ],
+    "endpoints.json": [
+      { method: "POST", path: "/api/newsletter", auth: "none", triggered_by: ["src/Footer.tsx:5"] },
+    ],
+    "auth.json": { strategy: "none" },
+  });
+  try {
+    const { warnings } = validate(root);
+    const w = warnings.find((msg) => msg.includes("overridden the inventory"));
+    assert.equal(w, undefined, `public-form target must not trigger the synthesis-override warning, got: ${warnings.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
+test("validate: save-shaped api_call button with signal 7 having fired correctly surfaces no backstop warning (happy path)", () => {
+  // The happy path: inventory classified Save as api_call, synthesis trusted it, signal 7 fired,
+  // placeholder User entity emitted. Neither backstop (A: local_state mis-class, B: synthesis
+  // override) should fire here.
+  const { root, cleanup } = makeFixture({
+    "screens.json": [
+      { id: "recipes", file: "src/Recipes.tsx", evidence: ["src/Recipes.tsx:1"], entities_displayed: ["Recipe"] },
+    ],
+    "components.json": { components: [{ name: "RecipeCard" }] },
+    "forms.json": {
+      forms: [],
+      standalone_buttons: [
+        { file: "src/RecipeCard.tsx:42", label: "Save recipe", action: "api_call", target: "POST /api/recipes/:id/save" },
+      ],
+      auth_surface: { signup: { present: false }, login: { present: false } },
+    },
+    "entities.json": [
+      {
+        name: "User",
+        table: "users",
+        fields: [
+          { name: "id", type: "uuid", pk: true },
+          { name: "created_at", type: "timestamptz", required: true },
+          { name: "updated_at", type: "timestamptz", required: true },
+        ],
+        evidence: ["src/Recipes.tsx:1"],
+        note: "placeholder",
+      },
+      {
+        name: "Recipe",
+        table: "recipes",
+        fields: [
+          { name: "id", type: "uuid", pk: true },
+          { name: "user_id", type: "uuid", required: false, fk: "users.id" },
+        ],
+        evidence: ["src/Recipes.tsx:1"],
+      },
+    ],
+    "endpoints.json": [
+      { method: "POST", path: "/api/recipes/:id/save", auth: "none", triggered_by: ["src/RecipeCard.tsx:42"] },
+    ],
+    "auth.json": { strategy: "none", inferred_from: "judgment:user_owned_mutations", signup: false },
+  });
+  try {
+    const { warnings } = validate(root);
+    const w = warnings.find((msg) => msg.includes("user-collection intent") || msg.includes("overridden the inventory"));
+    assert.equal(w, undefined, `signal-7-fired happy path must not trigger either backstop, got: ${warnings.join("; ")}`);
+  } finally {
+    cleanup();
+  }
+});
+
 test("validate: missing .backend-design/state/ directory returns a clear error", () => {
   const root = mkdtempSync(join(tmpdir(), "bd-validate-empty-"));
   try {
