@@ -26,7 +26,7 @@ Execute the phases in order: Pre-flight → Phase 1 (inventory) → Phase 2 (syn
 
 All design state lives in **`.backend-design/state/*.json`** — one file per category, written by Phase-1 agents and the Phase-2 synthesis agent. These JSON files are the **single source of truth**. The human-readable `backend-design.md` is rendered from them by `scripts/render-design.mjs`; the codegen agent in Phase 4 reads them directly.
 
-A validator at `<SKILL_DIR>/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing. If the validator emits the same error class three runs in a row, stop and surface the unfixable issues to the user — do not loop indefinitely.
+A validator at `<SKILL_DIR>/scripts/validate.mjs` checks the state for invariants (FK targets exist, every endpoint has a UI trigger, every entity has a PK, etc.). Run it after each synthesis step and fix errors before continuing. If the validator emits the same error class three runs in a row, stop and surface the unfixable issues to the user — do not loop indefinitely.
 
 ---
 
@@ -134,7 +134,7 @@ The orchestrator does NOT need to read these brief files. Spawn each subagent wi
 After all four agents return, run the validator:
 
 ```bash
-node <SKILL_DIR>/validate.mjs
+node <SKILL_DIR>/scripts/validate.mjs
 ```
 
 It will fail if any of the four files are missing or unparseable, and report Phase-1 cross-file issues (endpoints without UI triggers, components referenced by screens but missing from `components.json`, etc.). Fix gaps by re-spawning the relevant agent with a tighter brief — do not paper over gaps in the synthesis step. Apply the same three-iteration cap as Phase 2.
@@ -385,7 +385,7 @@ Give it this brief:
 After the synthesis agent finishes, **run the validator**:
 
 ```bash
-node <SKILL_DIR>/validate.mjs
+node <SKILL_DIR>/scripts/validate.mjs
 ```
 
 If it exits non-zero, read the errors, fix them by editing the JSON files directly (use `Edit`), and re-run. **Do not proceed to the markdown render or Phase 3 until validation passes.** Warnings are OK to leave but should be acknowledged in Open Questions. Cap fixup attempts at **three iterations**; if the same error class persists after three passes, stop and surface the unfixable issues to the user.
@@ -470,7 +470,7 @@ Spawn it with this prompt (do NOT read the brief yourself — the subagent reads
 
 After the skeptic agent finishes:
 
-1. Re-run the validator (`node <SKILL_DIR>/validate.mjs`) to ensure the appended questions are well-formed.
+1. Re-run the validator (`node <SKILL_DIR>/scripts/validate.mjs`) to ensure the appended questions are well-formed.
 2. Re-render the design doc so the new findings appear in the Open Questions section: `node <SKILL_DIR>/scripts/render-design.mjs`.
 3. Report a one-line summary to the user: `Skeptic pass: <N> finding(s) — see Open Questions in backend-design.md.`
 

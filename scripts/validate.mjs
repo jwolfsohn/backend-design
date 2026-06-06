@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync, existsSync } from "fs";
 import { join } from "path";
-import { isMainModule } from "./scripts/is-main.mjs";
-import { STATE_FILES } from "./scripts/state.mjs";
+import { isMainModule } from "./is-main.mjs";
+import { STATE_FILES } from "./state.mjs";
 
 const VALID_REL_TYPES = ["one-to-one", "one-to-many", "many-to-one", "many-to-many"];
 

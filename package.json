@@ -9,7 +9,6 @@
   },
   "files": [
     "SKILL.md",
-    "validate.mjs",
     "bin/",
     "prompts/",
     "scripts/",
@@ -23,7 +22,7 @@
   },
   "scripts": {
     "test": "node --test tests/*.test.mjs",
-    "test:validate": "node validate.mjs",
+    "test:validate": "node scripts/validate.mjs",
     "check:bin": "node -e \"const p=require('./package.json');const bad=Object.entries(p.bin||{}).filter(([,v])=>v.startsWith('./'));if(bad.length){console.error('bin paths must not start with ./ — npm strips them silently:',bad);process.exit(1);}console.log('bin paths OK')\"",
     "prepublishOnly": "npm pkg fix && npm run check:bin && npm test"
   },

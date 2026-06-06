@@ -731,7 +731,7 @@ async function reset() {
 async function validate() {
   banner();
   step("Validating .backend-design/state/");
-  const mod = await import("../validate.mjs");
+  const mod = await import("../scripts/validate.mjs");
   blank();
   const exitCode = mod.printResults(mod.validate(process.cwd()));
   blank();

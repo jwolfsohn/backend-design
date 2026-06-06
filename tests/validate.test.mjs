@@ -3,7 +3,7 @@ import { strict as assert } from "node:assert";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { validate } from "../validate.mjs";
+import { validate } from "../scripts/validate.mjs";
 
 function makeFixture(stateFiles) {
   const root = mkdtempSync(join(tmpdir(), "bd-validate-"));
